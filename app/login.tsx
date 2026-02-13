@@ -12,6 +12,8 @@ import {
     useColorScheme,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+
 
 export default function LoginScreen() {
     const [activeTab, setActiveTab] = useState('official'); // 'resident' or 'official'
@@ -21,6 +23,8 @@ export default function LoginScreen() {
     const [showPassword, setShowPassword] = useState(false);
     const [authMethod, setAuthMethod] = useState('password'); // 'password' or 'otp'
     const [showDepartmentDropdown, setShowDepartmentDropdown] = useState(false);
+    const router = useRouter();
+
 
     const departments = [
         'Select Department',
@@ -31,9 +35,13 @@ export default function LoginScreen() {
     ];
 
     const handleLogin = () => {
-        // TODO: Implement login logic
         console.log('Login attempt:', { activeTab, selectedDepartment, employeeId, password, authMethod });
+
+        // redirect to home tabs screen
+        // router.replace('/(tabs)');
+        console.log('Login successful');
     };
+
 
     return (
         <SafeAreaView style={styles.safeArea}>
@@ -242,8 +250,8 @@ const styles = StyleSheet.create({
         backgroundColor: '#0F1419',
     },
     logoImage: {
-        width: 220,
-        height: 100,
+        width: 50,
+        height: 50,
         marginBottom: 10,
     },
 
