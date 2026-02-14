@@ -1,5 +1,3 @@
-import { Image } from 'react-native';
-
 import React, { useState } from 'react';
 import {
     View,
@@ -8,238 +6,150 @@ import {
     TouchableOpacity,
     ScrollView,
     StyleSheet,
+    Image,
     SafeAreaView,
-    useColorScheme,
+    StatusBar,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-
+import { LinearGradient } from 'expo-linear-gradient';
 
 export default function LoginScreen() {
-    const [activeTab, setActiveTab] = useState('official'); // 'resident' or 'official'
-    const [selectedDepartment, setSelectedDepartment] = useState('');
-    const [employeeId, setEmployeeId] = useState('');
-    const [password, setPassword] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
-    const [authMethod, setAuthMethod] = useState('password'); // 'password' or 'otp'
-    const [showDepartmentDropdown, setShowDepartmentDropdown] = useState(false);
+    const [activeTab, setActiveTab] = useState<'resident' | 'official'>('resident');
+    const [mobileNumber, setMobileNumber] = useState('');
+    const [officialInput, setOfficialInput] = useState('');
     const router = useRouter();
 
-
-    const departments = [
-        'Select Department',
-        'Sanitation Department',
-        'Environmental Department',
-        'Administration',
-        'Finance Department',
-    ];
-
-    const handleLogin = () => {
-        console.log('Login attempt:', { activeTab, selectedDepartment, employeeId, password, authMethod });
-
-        // redirect to home tabs screen
-        // router.replace('/(tabs)');
-        console.log('Login successful');
+    const handleGetOtp = () => {
+        if (activeTab === 'resident') {
+            router.push('/verify-otp');
+        } else {
+            router.push('/official-verify-otp');
+        }
     };
-
 
     return (
         <SafeAreaView style={styles.safeArea}>
-            <ScrollView contentContainerStyle={styles.container}>
-                {/* Header Section */}
-                <View style={styles.header}>
-                    <Image
-                        source={require('../assets/images/LOGO.png')}
-                        style={styles.logoImage}
-                        resizeMode="contain"
-                    />
-                    <Text style={styles.appSubtitle}>Waste Collection Management App</Text>
-                </View>
-
-
-                {/* Tab Section */}
-                <View style={styles.tabContainer}>
-                    <TouchableOpacity
-                        style={[styles.tab, activeTab === 'resident' && styles.tabActive]}
-                        onPress={() => setActiveTab('resident')}
+            <StatusBar barStyle="light-content" />
+            <View style={styles.mainContainer}>
+                <ScrollView contentContainerStyle={styles.scrollContainer} bounces={false}>
+                    {/* Header Section */}
+                    <LinearGradient
+                        colors={['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120']}
+                        locations={[0, 0.4, 0.7, 1]}
+                        style={styles.header}
                     >
-                        <Text
-                            style={[
-                                styles.tabText,
-                                activeTab === 'resident' && styles.tabTextActive,
-                            ]}
-                        >
-                            Resident
-                        </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.tab, activeTab === 'official' && styles.tabActive]}
-                        onPress={() => setActiveTab('official')}
-                    >
-                        <Text
-                            style={[
-                                styles.tabText,
-                                activeTab === 'official' && styles.tabTextActive,
-                            ]}
-                        >
-                            Official
-                        </Text>
-                    </TouchableOpacity>
-                </View>
+                        {/* Background Icons (Simplified as simple text or omitted for now to keep it clean) */}
 
-                {/* Tab Description */}
-                {activeTab === 'official' && (
-                    <View style={styles.tabDescription}>
-                        <MaterialCommunityIcons name="check-circle" size={20} color="#2ECC71" />
-                        <Text style={styles.tabDescriptionText}>
-                            Official portal for authorized municipal staff
-                        </Text>
-                    </View>
-                )}
-
-                {activeTab === 'official' && (
-                    <View style={styles.formContainer}>
-                        {/* Department Dropdown */}
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.label}>Department</Text>
-                            <TouchableOpacity
-                                style={styles.dropdown}
-                                onPress={() => setShowDepartmentDropdown(!showDepartmentDropdown)}
-                            >
-                                <Text
-                                    style={[
-                                        styles.dropdownText,
-                                        !selectedDepartment && styles.placeholderText,
-                                    ]}
-                                >
-                                    {selectedDepartment || 'Select Department'}
-                                </Text>
-                                <MaterialCommunityIcons
-                                    name="chevron-down"
-                                    size={24}
-                                    color="#9CFF00"
-                                />
-                            </TouchableOpacity>
-                            {showDepartmentDropdown && (
-                                <View style={styles.dropdownMenu}>
-                                    {departments.map((dept, index) => (
-                                        <TouchableOpacity
-                                            key={index}
-                                            style={styles.dropdownItem}
-                                            onPress={() => {
-                                                setSelectedDepartment(dept);
-                                                setShowDepartmentDropdown(false);
-                                            }}
-                                        >
-                                            <Text style={styles.dropdownItemText}>{dept}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </View>
-                            )}
-                        </View>
-
-                        {/* Employee ID Input */}
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.label}>Employee ID</Text>
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Enter your employee ID"
-                                placeholderTextColor="#7A8A99"
-                                value={employeeId}
-                                onChangeText={setEmployeeId}
+                        <View style={styles.logoContainer}>
+                            <Image
+                                source={require('../assets/images/LOGO.png')}
+                                style={styles.logoImage}
+                                resizeMode="contain"
                             />
+                            <Text style={styles.appSubtitle}>Waste Collection Management App</Text>
+                        </View>
+                    </LinearGradient>
+
+                    {/* Divider */}
+                    <View style={styles.divider} />
+
+                    {/* Form Section */}
+                    <View style={styles.formContainer}>
+                        <Text style={styles.loginAsLabel}>Login as</Text>
+
+                        {/* Tabs */}
+                        <View style={styles.tabContainer}>
+                            <TouchableOpacity
+                                style={[styles.tab, activeTab === 'resident' && styles.tabActive]}
+                                onPress={() => setActiveTab('resident')}
+                            >
+                                <LinearGradient
+                                    colors={activeTab === 'resident' ? ['#00c853', '#1b8a2a'] : ['transparent', 'transparent']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={styles.tabGradient}
+                                >
+                                    <Text style={[styles.tabText, activeTab === 'resident' && styles.tabTextActive]}>
+                                        Resident
+                                    </Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.tab, activeTab === 'official' && styles.tabActive]}
+                                onPress={() => setActiveTab('official')}
+                            >
+                                <LinearGradient
+                                    colors={activeTab === 'official' ? ['#00c853', '#1b8a2a'] : ['transparent', 'transparent']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={styles.tabGradient}
+                                >
+                                    <Text style={[styles.tabText, activeTab === 'official' && styles.tabTextActive]}>
+                                        Official
+                                    </Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
                         </View>
 
-                        {/* Password/OTP Toggle */}
-                        <View style={styles.authMethodContainer}>
-                            <TouchableOpacity
-                                style={[
-                                    styles.authMethodBtn,
-                                    authMethod === 'password' && styles.authMethodBtnActive,
-                                ]}
-                                onPress={() => setAuthMethod('password')}
-                            >
-                                <Text
-                                    style={[
-                                        styles.authMethodText,
-                                        authMethod === 'password' && styles.authMethodTextActive,
-                                    ]}
-                                >
-                                    Password
-                                </Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[
-                                    styles.authMethodBtn,
-                                    authMethod === 'otp' && styles.authMethodBtnActive,
-                                ]}
-                                onPress={() => setAuthMethod('otp')}
-                            >
-                                <Text
-                                    style={[
-                                        styles.authMethodText,
-                                        authMethod === 'otp' && styles.authMethodTextActive,
-                                    ]}
-                                >
-                                    OTP
-                                </Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {/* Password Input */}
-                        {authMethod === 'password' && (
+                        {/* Inputs */}
+                        {activeTab === 'resident' ? (
                             <View style={styles.inputGroup}>
-                                <Text style={styles.label}>Password</Text>
-                                <View style={styles.passwordInputContainer}>
-                                    <TextInput
-                                        style={styles.passwordInput}
-                                        placeholder="Enter your password"
-                                        placeholderTextColor="#7A8A99"
-                                        secureTextEntry={!showPassword}
-                                        value={password}
-                                        onChangeText={setPassword}
-                                    />
-                                    <TouchableOpacity
-                                        onPress={() => setShowPassword(!showPassword)}
-                                        style={styles.eyeIcon}
-                                    >
-                                        <MaterialCommunityIcons
-                                            name={showPassword ? 'eye' : 'eye-off'}
-                                            size={24}
-                                            color="#2ECC71"
-                                        />
-                                    </TouchableOpacity>
-                                </View>
+                                <Text style={styles.label}>Mobile No.</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Enter mobile number"
+                                    placeholderTextColor="#7A8A99"
+                                    value={mobileNumber}
+                                    onChangeText={setMobileNumber}
+                                    keyboardType="phone-pad"
+                                />
+                            </View>
+                        ) : (
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Mobile No. / User ID</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Enter mobile number or user ID"
+                                    placeholderTextColor="#7A8A99"
+                                    value={officialInput}
+                                    onChangeText={setOfficialInput}
+                                />
                             </View>
                         )}
 
-                        {/* Forgot Password Link */}
-                        <TouchableOpacity style={styles.forgotPasswordContainer}>
-                            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+                        {/* Get OTP Button */}
+                        <TouchableOpacity onPress={handleGetOtp} activeOpacity={0.8}>
+                            <LinearGradient
+                                colors={['#16362a', '#0e2419']}
+                                style={styles.otpButton}
+                            >
+                                <Text style={styles.otpButtonText}>Get OTP</Text>
+                            </LinearGradient>
                         </TouchableOpacity>
 
-                        {/* Login Button */}
-                        <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
-                            <Text style={styles.loginButtonText}>Login</Text>
-                        </TouchableOpacity>
-                    </View>
-                )}
+                        {/* Info Notice */}
+                        <View style={styles.infoBox}>
+                            <MaterialCommunityIcons name="file-document-outline" size={18} color="#3d7a56" style={styles.infoIcon} />
+                            <Text style={styles.infoText}>
+                                An OTP will be sent to your registered mobile number
+                            </Text>
+                        </View>
 
-                {activeTab === 'resident' && (
-                    <View style={styles.formContainer}>
-                        <Text style={styles.residentText}>Resident Login - Coming Soon</Text>
-                    </View>
-                )}
+                        <View style={styles.spacer} />
 
-                {/* Footer */}
-                <View style={styles.footer}>
-                    <Text style={styles.footerText}>
-                        By continuing, you agree to our{' '}
-                        <Text style={styles.footerLink}>Terms of Service</Text> and{' '}
-                        <Text style={styles.footerLink}>Privacy Policy</Text>
-                    </Text>
-                </View>
-            </ScrollView>
+                        {/* Footer */}
+                        <View style={styles.footer}>
+                            <Text style={styles.footerText}>
+                                By continuing, you agree to our{' '}
+                                <Text style={styles.footerLink}>Terms of Service</Text> and{' '}
+                                <Text style={styles.footerLink}>Privacy Policy</Text>
+                            </Text>
+                        </View>
+                    </View>
+                </ScrollView>
+            </View>
         </SafeAreaView>
     );
 }
@@ -247,238 +157,151 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: '#0F1419',
+        backgroundColor: '#0b1120',
     },
-    logoImage: {
-        width: 50,
-        height: 50,
-        marginBottom: 10,
+    mainContainer: {
+        flex: 1,
+        backgroundColor: '#0b1120',
     },
-
-    container: {
+    scrollContainer: {
         flexGrow: 1,
-        paddingHorizontal: 20,
-        paddingVertical: 20,
-        backgroundColor: '#0F1419',
     },
     header: {
+        paddingTop: 60,
+        paddingBottom: 40,
         alignItems: 'center',
-        marginBottom: 30,
+        paddingHorizontal: 20,
     },
     logoContainer: {
-        position: 'relative',
+        alignItems: 'center',
+    },
+    logoImage: {
         width: 100,
         height: 100,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 15,
-    },
-    logoInner: {
-        position: 'absolute',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    appTitle: {
-        fontSize: 28,
-        fontWeight: '700',
-        color: '#9CFF00',
-        letterSpacing: 2,
-        marginBottom: 5,
+        marginBottom: 10,
     },
     appSubtitle: {
-        fontSize: 14,
-        color: '#FFFFFF',
-        opacity: 0.8,
+        fontSize: 18,
+        color: '#0eb14dff',
+        letterSpacing: 0.5,
+        fontWeight: '400',
+        textAlign: 'center',
+    },
+    divider: {
+        height: 1,
+        backgroundColor: '#1c2a3a',
+        width: '100%',
+    },
+    formContainer: {
+        flex: 1,
+        padding: 20,
+        paddingTop: 28,
+    },
+    loginAsLabel: {
+        fontSize: 19,
+        fontWeight: '700',
+        color: '#d0d8e4',
+        marginBottom: 12,
     },
     tabContainer: {
         flexDirection: 'row',
-        marginBottom: 15,
-        backgroundColor: '#1A1F2A',
-        borderRadius: 8,
-        padding: 4,
+        gap: 12,
+        marginBottom: 28,
     },
     tab: {
         flex: 1,
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        alignItems: 'center',
-        borderRadius: 6,
+        borderRadius: 9999, // Full pill shape
+        overflow: 'hidden',
+        borderWidth: 1.5,
+        borderColor: '#263345',
+        backgroundColor: 'transparent',
     },
     tabActive: {
-        backgroundColor: '#2ECC71',
+        borderColor: 'transparent',
+        backgroundColor: 'transparent',
+    },
+    tabGradient: {
+        paddingVertical: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     tabText: {
-        fontSize: 14,
+        fontSize: 18,
         fontWeight: '600',
-        color: '#FFFFFF',
-        opacity: 0.6,
+        color: '#7b8a9e',
     },
     tabTextActive: {
         color: '#FFFFFF',
-        opacity: 1,
-    },
-    tabDescription: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#1A2F2A',
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderRadius: 8,
-        marginBottom: 25,
-    },
-    tabDescriptionText: {
-        fontSize: 13,
-        color: '#2ECC71',
-        marginLeft: 10,
-        fontWeight: '500',
-    },
-    formContainer: {
-        marginBottom: 30,
     },
     inputGroup: {
         marginBottom: 20,
     },
     label: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#FFFFFF',
-        marginBottom: 8,
-    },
-    dropdown: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: '#1A2035',
-        borderWidth: 1,
-        borderColor: '#2C3E50',
-        borderRadius: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-    },
-    dropdownText: {
-        fontSize: 14,
-        color: '#FFFFFF',
-        flex: 1,
-    },
-    placeholderText: {
-        color: '#7A8A99',
-    },
-    dropdownMenu: {
-        backgroundColor: '#1A2035',
-        borderWidth: 1,
-        borderColor: '#2C3E50',
-        borderTopWidth: 0,
-        borderBottomLeftRadius: 8,
-        borderBottomRightRadius: 8,
-        marginTop: -8,
-        overflow: 'hidden',
-    },
-    dropdownItem: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#2C3E50',
-    },
-    dropdownItemText: {
-        fontSize: 14,
-        color: '#FFFFFF',
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#d0d8e4',
+        marginBottom: 10,
     },
     input: {
-        backgroundColor: '#1A2035',
-        borderWidth: 1,
-        borderColor: '#2C3E50',
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        borderColor: '#263345',
         borderRadius: 8,
         paddingHorizontal: 16,
         paddingVertical: 14,
-        color: '#FFFFFF',
-        fontSize: 14,
+        color: '#b0b8c8',
+        fontSize: 17,
     },
-    authMethodContainer: {
-        flexDirection: 'row',
-        gap: 12,
-        marginBottom: 20,
-    },
-    authMethodBtn: {
-        flex: 1,
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        backgroundColor: '#1A2035',
-        borderWidth: 1,
-        borderColor: '#2C3E50',
-        borderRadius: 8,
-        alignItems: 'center',
-    },
-    authMethodBtnActive: {
-        backgroundColor: '#2ECC71',
-        borderColor: '#2ECC71',
-    },
-    authMethodText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#FFFFFF',
-        opacity: 0.6,
-    },
-    authMethodTextActive: {
-        color: '#FFFFFF',
-        opacity: 1,
-    },
-    passwordInputContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#1A2035',
-        borderWidth: 1,
-        borderColor: '#2C3E50',
-        borderRadius: 8,
-    },
-    passwordInput: {
-        flex: 1,
-        paddingHorizontal: 16,
+    otpButton: {
         paddingVertical: 14,
-        color: '#FFFFFF',
-        fontSize: 14,
-    },
-    eyeIcon: {
-        paddingHorizontal: 12,
-    },
-    forgotPasswordContainer: {
-        marginBottom: 25,
-    },
-    forgotPasswordText: {
-        fontSize: 13,
-        color: '#2ECC71',
-        fontWeight: '500',
-    },
-    loginButton: {
-        backgroundColor: '#2C3E50',
-        paddingVertical: 16,
         borderRadius: 8,
         alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#1e4a32',
+        marginTop: 8,
     },
-    loginButtonText: {
-        fontSize: 16,
+    otpButtonText: {
+        fontSize: 19,
         fontWeight: '700',
-        color: '#FFFFFF',
+        color: '#c8d4cc',
+        letterSpacing: 0.5,
     },
-    residentText: {
+    infoBox: {
+        marginTop: 20,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: 'rgba(0, 180, 80, 0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(0, 180, 80, 0.12)',
+        borderRadius: 8,
+        padding: 14,
+        gap: 12,
+    },
+    infoIcon: {
+        marginTop: 2,
+    },
+    infoText: {
         fontSize: 16,
-        color: '#FFFFFF',
-        textAlign: 'center',
-        paddingVertical: 40,
+        color: '#7aaa8e',
+        lineHeight: 24,
+        flex: 1,
+    },
+    spacer: {
+        flex: 1,
+        minHeight: 40,
     },
     footer: {
-        marginTop: 20,
-        paddingTop: 20,
-        borderTopWidth: 1,
-        borderTopColor: '#2C3E50',
+        paddingVertical: 12,
+        alignItems: 'center',
     },
     footerText: {
-        fontSize: 11,
-        color: '#7A8A99',
+        fontSize: 15,
+        color: '#3e5068',
         textAlign: 'center',
-        lineHeight: 18,
+        lineHeight: 24,
     },
     footerLink: {
-        color: '#2ECC71',
+        color: '#00c853',
         fontWeight: '600',
     },
 });
