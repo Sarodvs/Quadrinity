@@ -14,11 +14,18 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack initialRouteName="login">
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+      <Stack initialRouteName="login" screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: '#000000' }
+      }}>
+        <Stack.Screen name="login" />
+        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal', headerShown: true }} />
+        <Stack.Screen name="verify-otp" />
+        <Stack.Screen name="official-verify-otp" />
+        <Stack.Screen name="forgot-password" />
+        <Stack.Screen name="home" />
       </Stack>
-      <StatusBar style="auto" />
+      <StatusBar style="light" backgroundColor="#000000" />
     </ThemeProvider>
   );
 }

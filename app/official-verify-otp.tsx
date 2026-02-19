@@ -64,8 +64,7 @@ export default function OfficialVerifyOtpScreen() {
         if (otp.every((d) => d)) {
             // Proceed to home
             console.log("Verified Official OTP");
-            // router.replace('/home'); 
-            alert("Verified! (Navigation to Home pending)");
+            router.replace('/home');
         }
     };
 
@@ -181,14 +180,7 @@ export default function OfficialVerifyOtpScreen() {
 
                         <View style={styles.spacer} />
 
-                        {/* Footer */}
-                        <View style={styles.footer}>
-                            <Text style={styles.footerText}>
-                                By continuing, you agree to our{' '}
-                                <Text style={styles.footerLink}>Terms of Service</Text> and{' '}
-                                <Text style={styles.footerLink}>Privacy Policy</Text>
-                            </Text>
-                        </View>
+
                     </View>
                 </View>
             </SafeAreaView>
@@ -199,23 +191,24 @@ export default function OfficialVerifyOtpScreen() {
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: '#0b1120',
+        backgroundColor: '#000000',
     },
     container: {
         flex: 1,
         backgroundColor: '#0b1120',
     },
     header: {
-        paddingTop: 20, // Adjusted for typical SafeAreaView behavior
-        paddingBottom: 40,
         alignItems: 'center',
+        paddingTop: 10,
+        paddingBottom: 10,
         paddingHorizontal: 20,
         position: 'relative',
+        marginBottom: 10,
     },
     backButtonWrapper: {
         position: 'absolute',
         left: 16,
-        top: 20, // Matches paddingTop
+        top: 40, // Matches paddingTop + some offset if needed, or just keep as is
         zIndex: 10,
     },
     backButton: {
@@ -232,19 +225,19 @@ const styles = StyleSheet.create({
     },
     logoContainer: {
         alignItems: 'center',
-        marginTop: 24,
     },
     logoImage: {
         width: 200,
-        height: 200,
-        marginBottom: 10,
+        height: 150,
+        marginBottom: 4,
     },
     appSubtitle: {
-        fontSize: 18,
-        color: '#6bc7b8',
+        fontSize: 14,
+        color: '#0eb14dff',
         letterSpacing: 0.5,
         fontWeight: '400',
         textAlign: 'center',
+        fontFamily: 'SN_Pro_Regular'
     },
     divider: {
         height: 1,
@@ -366,19 +359,5 @@ const styles = StyleSheet.create({
     spacer: {
         flex: 1,
         minHeight: 40,
-    },
-    footer: {
-        paddingVertical: 12,
-        alignItems: 'center',
-    },
-    footerText: {
-        fontSize: 15,
-        color: '#3e5068',
-        textAlign: 'center',
-        lineHeight: 24,
-    },
-    footerLink: {
-        color: '#00c853',
-        fontWeight: '600',
     },
 });
