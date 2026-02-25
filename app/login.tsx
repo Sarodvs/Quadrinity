@@ -7,7 +7,6 @@ import {
     ScrollView,
     StyleSheet,
     Image,
-    SafeAreaView,
     StatusBar,
     Dimensions,
     Modal,
@@ -16,19 +15,21 @@ import {
     Platform,
     TouchableWithoutFeedback,
     Keyboard,
+    ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
-import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
-import { auth, firebaseConfig } from './firebaseConfig';
+import authService from './services/authService';
+
 
 const { height } = Dimensions.get('window');
 
 export default function LoginScreen() {
     const [activeTab, setActiveTab] = useState<'resident' | 'official'>('resident');
     const [mobileNumber, setMobileNumber] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
 
     // Official Login State
     const [officialUserId, setOfficialUserId] = useState('');
@@ -44,43 +45,61 @@ export default function LoginScreen() {
         address: '',
     });
     const [registerOtp, setRegisterOtp] = useState('');
+    const [registerVerificationId, setRegisterVerificationId] = useState('');
     const [registerErrors, setRegisterErrors] = useState({
         name: '',
         mobile: '',
         houseNo: '',
         address: '',
     });
+    const [registerIsLoading, setRegisterIsLoading] = useState(false);
 
     const router = useRouter();
-
-    // Firebase Auth State
-    const [verificationId, setVerificationId] = useState('');
-    const recaptchaVerifier = React.useRef(null);
 
     // Login Logic
     const handleLogin = async () => {
         if (activeTab === 'resident') {
             if (mobileNumber.length === 10) {
+                setIsLoading(true);
                 try {
-                    // Send OTP via Firebase
-                    // Note: For India, prefix +91. 
-                    const phoneNumber = `+91${mobileNumber}`;
-                    const phoneProvider = new PhoneAuthProvider(auth);
-                    const verificationId = await phoneProvider.verifyPhoneNumber(
-                        phoneNumber,
-                        recaptchaVerifier.current
-                    );
-                    setVerificationId(verificationId);
-                    router.push({ pathname: '/verify-otp', params: { verificationId, mobileNumber } });
+                    const result = await authService.sendOTP(mobileNumber);
+
+                    if (result.success && result.verificationId) {
+                        router.push({
+                            pathname: '/verify-otp',
+                            params: { verificationId: result.verificationId, mobileNumber },
+                        });
+                    } else {
+                        Alert.alert('Error', result.error || 'Failed to send OTP');
+                    }
                 } catch (error: any) {
-                    Alert.alert('Error', error.message);
+                    const errorMsg = error.message || 'An unexpected error occurred';
+                    Alert.alert('Error', errorMsg);
+                } finally {
+                    setIsLoading(false);
                 }
             }
         } else {
-            // Official Login Logic
-            if (officialUserId && officialPassword) {
-                // Mock success
-                router.replace('/home');
+            // Official Login Logic (OTP-based)
+            if (officialUserId) {
+                setIsLoading(true);
+                try {
+                    const result = await authService.sendOTP(officialUserId);
+
+                    if (result.success && result.verificationId) {
+                        router.push({
+                            pathname: '/official-verify-otp',
+                            params: { verificationId: result.verificationId, officialId: officialUserId },
+                        });
+                    } else {
+                        Alert.alert('Error', result.error || 'Failed to send OTP');
+                    }
+                } catch (error: any) {
+                    const errorMsg = error.message || 'An unexpected error occurred';
+                    Alert.alert('Error', errorMsg);
+                } finally {
+                    setIsLoading(false);
+                }
             }
         }
     };
@@ -93,7 +112,7 @@ export default function LoginScreen() {
     };
 
     const isResidentValid = mobileNumber.length === 10;
-    const isOfficialValid = officialUserId.length > 0 && officialPassword.length > 0;
+    const isOfficialValid = officialUserId.length > 0;
     const isInputValid = activeTab === 'resident' ? isResidentValid : isOfficialValid;
 
     // Registration Logic
@@ -142,61 +161,67 @@ export default function LoginScreen() {
 
     const handleSubmitDetails = async () => {
         if (validateRegisterForm()) {
+            setRegisterIsLoading(true);
             try {
-                // Send OTP for Registration
-                const phoneNumber = `+91${registerForm.mobile}`;
-                const phoneProvider = new PhoneAuthProvider(auth);
-                const verificationId = await phoneProvider.verifyPhoneNumber(
-                    phoneNumber,
-                    recaptchaVerifier.current
-                );
-                setVerificationId(verificationId);
-                setRegisterStep('otp');
+                const result = await authService.sendOTP(registerForm.mobile);
+
+                if (result.success && result.verificationId) {
+                    setRegisterVerificationId(result.verificationId);
+                    setRegisterStep('otp');
+                    setRegisterOtp('');
+                } else {
+                    Alert.alert('Error', result.error || 'Failed to send OTP');
+                }
             } catch (error: any) {
-                Alert.alert('Error', error.message);
+                Alert.alert('Error', error.message || 'An unexpected error occurred');
+            } finally {
+                setRegisterIsLoading(false);
             }
         }
     };
 
     const handleRegisterVerifyOtp = async () => {
-        if (registerOtp.length >= 6) {
+        if (registerOtp.length === 6) {
+            setRegisterIsLoading(true);
             try {
-                const credential = PhoneAuthProvider.credential(
-                    verificationId,
+                const result = await authService.verifyOTP(
+                    registerVerificationId,
                     registerOtp
                 );
-                await signInWithCredential(auth, credential);
 
-                Alert.alert("Success", "Registered Successfully!", [
-                    {
-                        text: "OK", onPress: () => {
-                            closeRegisterModal();
-                            setMobileNumber(registerForm.mobile);
-                        }
-                    }
-                ]);
+                if (result.success) {
+                    Alert.alert('Success', 'Registered Successfully!', [
+                        {
+                            text: 'OK',
+                            onPress: () => {
+                                closeRegisterModal();
+                                setMobileNumber(registerForm.mobile);
+                            },
+                        },
+                    ]);
+                } else {
+                    Alert.alert('Error', result.error || 'Invalid OTP. Please try again.');
+                }
             } catch (error: any) {
-                Alert.alert("Error", `Invalid OTP: ${error.message}`);
+                Alert.alert('Error', error.message || 'An unexpected error occurred');
+            } finally {
+                setRegisterIsLoading(false);
             }
         } else {
-            Alert.alert("Error", "Please enter a valid 6-digit OTP");
+            Alert.alert('Error', 'Please enter a valid 6-digit OTP');
         }
     };
 
     return (
         <SafeAreaView style={styles.safeArea}>
             <StatusBar barStyle="light-content" />
+            
             <View style={styles.mainContainer}>
                 <ScrollView
                     contentContainerStyle={styles.scrollContainer}
                     bounces={false}
                     showsVerticalScrollIndicator={false}
                 >
-                    <FirebaseRecaptchaVerifierModal
-                        ref={recaptchaVerifier}
-                        firebaseConfig={firebaseConfig}
-                        attemptInvisibleVerification={true} // experimental
-                    />
                     {/* Header Section */}
                     <LinearGradient
                         colors={['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120']}
@@ -283,33 +308,17 @@ export default function LoginScreen() {
                         ) : (
                             <View>
                                 <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>User ID</Text>
+                                    <Text style={styles.label}>Official ID / Phone</Text>
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="Enter User ID"
+                                        placeholder="Enter Official ID or Phone Number"
                                         placeholderTextColor="#7A8A99"
                                         value={officialUserId}
                                         onChangeText={setOfficialUserId}
                                         autoCapitalize="none"
+                                        keyboardType="phone-pad"
                                     />
                                 </View>
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Password</Text>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder="Enter Password"
-                                        placeholderTextColor="#7A8A99"
-                                        value={officialPassword}
-                                        onChangeText={setOfficialPassword}
-                                        secureTextEntry
-                                    />
-                                </View>
-                                <TouchableOpacity
-                                    onPress={() => router.push('/forgot-password')}
-                                    style={styles.forgotPasswordContainer}
-                                >
-                                    <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-                                </TouchableOpacity>
                             </View>
                         )}
 
@@ -317,27 +326,29 @@ export default function LoginScreen() {
                         <TouchableOpacity
                             onPress={handleLogin}
                             activeOpacity={0.8}
-                            disabled={!isInputValid}
+                            disabled={!isInputValid || isLoading}
                         >
                             <LinearGradient
-                                colors={isInputValid ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
-                                style={[styles.actionButton, !isInputValid && styles.actionButtonDisabled]}
+                                colors={isInputValid && !isLoading ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
+                                style={[styles.actionButton, (!isInputValid || isLoading) && styles.actionButtonDisabled]}
                             >
-                                <Text style={[styles.actionButtonText, !isInputValid && styles.actionButtonTextDisabled]}>
-                                    {activeTab === 'resident' ? 'Get OTP' : 'Login'}
-                                </Text>
+                                {isLoading ? (
+                                    <ActivityIndicator size="small" color="#FFFFFF" />
+                                ) : (
+                                    <Text style={[styles.actionButtonText, !isInputValid && styles.actionButtonTextDisabled]}>
+                                        {activeTab === 'resident' ? 'Get OTP' : 'Get OTP'}
+                                    </Text>
+                                )}
                             </LinearGradient>
                         </TouchableOpacity>
 
-                        {/* Info Notice (Only for Resident) */}
-                        {activeTab === 'resident' && (
-                            <View style={styles.infoBox}>
-                                <MaterialCommunityIcons name="file-document-outline" size={18} color="#3d7a56" style={styles.infoIcon} />
-                                <Text style={styles.infoText}>
-                                    An OTP will be sent to your registered mobile number
-                                </Text>
-                            </View>
-                        )}
+                        {/* Info Notice */}
+                        <View style={styles.infoBox}>
+                            <MaterialCommunityIcons name="file-document-outline" size={18} color="#3d7a56" style={styles.infoIcon} />
+                            <Text style={styles.infoText}>
+                                {activeTab === 'resident' ? 'An OTP will be sent to your registered mobile number' : 'An OTP will be sent to your registered contact'}
+                            </Text>
+                        </View>
 
                         <View style={styles.spacer} />
 
@@ -742,6 +753,11 @@ const styles = StyleSheet.create({
         color: '#e53935',
         fontSize: 12,
         marginTop: 4,
+    },
+    errorTextAlert: {
+        color: '#e53935',
+        fontSize: 13,
+        marginBottom: 16,
     },
     modalButton: {
         paddingVertical: 14,

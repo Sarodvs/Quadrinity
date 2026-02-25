@@ -4,22 +4,28 @@ import {
     Text,
     StyleSheet,
     TouchableOpacity,
-    SafeAreaView,
     StatusBar,
     TextInput,
     Image,
     Keyboard,
     TouchableWithoutFeedback,
+    Alert,
+    ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import authService from './services/authService';
 
 export default function OfficialVerifyOtpScreen() {
     const router = useRouter();
+    const { verificationId, officialId } = useLocalSearchParams<{ verificationId: string; officialId: string }>();
     const [otp, setOtp] = useState(['', '', '', '', '', '']);
     const [timer, setTimer] = useState(30);
     const [canResend, setCanResend] = useState(false);
+    const [isVerifying, setIsVerifying] = useState(false);
+    const [otpError, setOtpError] = useState('');
     const inputRefs = useRef<Array<TextInput | null>>([]);
 
     useEffect(() => {
@@ -60,11 +66,26 @@ export default function OfficialVerifyOtpScreen() {
         }
     };
 
-    const handleVerify = () => {
+    const handleVerify = async () => {
         if (otp.every((d) => d)) {
-            // Proceed to home
-            console.log("Verified Official OTP");
-            router.replace('/home');
+            setIsVerifying(true);
+            setOtpError('');
+            try {
+                const otpCode = otp.join('');
+                const result = await authService.verifyOTP(verificationId || '', otpCode);
+
+                if (result.success) {
+                    // Navigate directly to home on success
+                    router.replace('/home');
+                } else {
+                    setOtpError(result.error || 'Invalid OTP. Please try again.');
+                }
+            } catch (error: any) {
+                const errorMsg = error.message || 'An unexpected error occurred';
+                setOtpError(errorMsg);
+            } finally {
+                setIsVerifying(false);
+            }
         }
     };
 
@@ -128,22 +149,28 @@ export default function OfficialVerifyOtpScreen() {
                                     style={[
                                         styles.otpInput,
                                         digit ? styles.otpInputFilled : null,
-                                        { borderColor: digit ? '#00c853' : '#263345' }
+                                        otpError ? styles.otpInputError : null,
+                                        { borderColor: otpError ? '#e53935' : digit ? '#00c853' : '#263345' }
                                     ]}
                                     value={digit}
-                                    onChangeText={(text) => handleChange(text, index)}
+                                    onChangeText={(text) => { handleChange(text, index); setOtpError(''); }}
                                     onKeyPress={(e) => handleKeyPress(e, index)}
                                     keyboardType="number-pad"
                                     maxLength={1}
                                     selectTextOnFocus
                                     cursorColor="#00c853"
+                                    editable={!isVerifying}
                                 />
                             ))}
                         </View>
 
+                        {otpError && (
+                            <Text style={styles.errorText}>{otpError}</Text>
+                        )}
+
                         {/* Resend Timer */}
                         <View style={styles.resendContainer}>
-                            {canResend ? (
+                            {canResend && !isVerifying ? (
                                 <TouchableOpacity onPress={handleResend}>
                                     <Text style={styles.resendLink}>Resend OTP</Text>
                                 </TouchableOpacity>
@@ -158,15 +185,19 @@ export default function OfficialVerifyOtpScreen() {
                         <TouchableOpacity
                             onPress={handleVerify}
                             activeOpacity={0.8}
-                            disabled={!otp.every((d) => d)}
+                            disabled={!otp.every((d) => d) || isVerifying}
                         >
                             <LinearGradient
-                                colors={otp.every((d) => d) ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
-                                style={[styles.verifyButton, !otp.every((d) => d) && styles.verifyButtonDisabled]}
+                                colors={otp.every((d) => d) && !isVerifying ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
+                                style={[styles.verifyButton, (!otp.every((d) => d) || isVerifying) && styles.verifyButtonDisabled]}
                             >
-                                <Text style={[styles.verifyButtonText, !otp.every((d) => d) && styles.verifyButtonTextDisabled]}>
-                                    Verify & Login
-                                </Text>
+                                {isVerifying ? (
+                                    <ActivityIndicator size="small" color="#FFFFFF" />
+                                ) : (
+                                    <Text style={[styles.verifyButtonText, !otp.every((d) => d) && styles.verifyButtonTextDisabled]}>
+                                        Verify & Login
+                                    </Text>
+                                )}
                             </LinearGradient>
                         </TouchableOpacity>
 
@@ -300,6 +331,14 @@ const styles = StyleSheet.create({
     },
     otpInputFilled: {
         backgroundColor: 'rgba(0,200,83,0.06)',
+    },
+    otpInputError: {
+        backgroundColor: 'rgba(229, 57, 53, 0.05)',
+    },
+    errorText: {
+        color: '#e53935',
+        fontSize: 13,
+        marginBottom: 16,
     },
     resendContainer: {
         marginBottom: 28,
