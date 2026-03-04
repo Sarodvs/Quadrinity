@@ -1,26 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    StatusBar,
-    TextInput,
-    Image,
-    Alert,
-    Keyboard,
-    TouchableWithoutFeedback,
     ActivityIndicator,
+    Image,
+    Keyboard,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    TouchableWithoutFeedback,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import authService from './services/authService';
 
 export default function VerifyOtpScreen() {
     const router = useRouter();
-    const { verificationId, mobileNumber } = useLocalSearchParams<{ verificationId: string; mobileNumber: string }>();
+    const { verificationId, email } = useLocalSearchParams<{ verificationId: string; email: string }>();
     const [otp, setOtp] = useState(['', '', '', '', '', '']);
     const [timer, setTimer] = useState(30);
     const [canResend, setCanResend] = useState(false);
