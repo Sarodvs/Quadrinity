@@ -1,19 +1,18 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { useState } from 'react';
 import {
-    View,
-    Text,
-    StyleSheet,
-    ScrollView,
-    TouchableOpacity,
+    Dimensions,
     Image,
     SafeAreaView,
+    ScrollView,
     StatusBar,
-    Dimensions,
-    Platform,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
 const { width } = Dimensions.get('window');
 
@@ -110,9 +109,9 @@ export default function HomeScreen() {
                     <OrdersContent orders={orders} onSchedulePickup={handleSchedulePickup} />
                 )}
 
-                {/* Placeholders for other tabs */}
-                {activeTab === 'history' && <PlaceholderContent title="History" />}
-                {activeTab === 'profile' && <PlaceholderContent title="Profile" />}
+                {/* Additional Tabs */}
+                {activeTab === 'history' && <HistoryContent />}
+                {activeTab === 'profile' && <ProfileContent />}
 
                 {/* Bottom Navigation */}
                 <View style={styles.bottomNav}>
@@ -488,6 +487,238 @@ const PlaceholderContent = ({ title }: { title: string }) => (
     </View>
 );
 
+const MOCK_HISTORY_DATA = [
+    {
+        id: 'ORD-99382',
+        type: 'Scrap/Recyclable Waste',
+        date: '12 Feb 2024',
+        time: '10:30 AM',
+        status: 'Completed',
+        weight: '15.5 kg',
+        points: '+45 Points'
+    },
+    {
+        id: 'ORD-88271',
+        type: 'E-Waste Collection',
+        date: '28 Jan 2024',
+        time: '02:15 PM',
+        status: 'Completed',
+        weight: '5.2 kg',
+        points: '+20 Points'
+    },
+    {
+        id: 'ORD-77160',
+        type: 'Scrap/Recyclable Waste',
+        date: '10 Jan 2024',
+        time: '11:00 AM',
+        status: 'Cancelled',
+        weight: '-',
+        points: '0 Points'
+    },
+    {
+        id: 'ORD-66059',
+        type: 'Bulk Waste',
+        date: '15 Dec 2023',
+        time: '09:45 AM',
+        status: 'Completed',
+        weight: '45.0 kg',
+        points: '+150 Points'
+    }
+];
+
+const HistoryContent = () => {
+    return (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            {/* Header / Summary Area */}
+            <LinearGradient
+                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                locations={[0, 0.5, 1]}
+                style={[styles.header, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
+            >
+                <Text style={styles.profileName}>Collection History</Text>
+                <Text style={styles.profileEmail}>Your past waste management activities</Text>
+
+                <View style={[styles.statsContainer, { marginTop: 20, backgroundColor: 'transparent', borderWidth: 0, padding: 0, shadowOpacity: 0 }]}>
+                    <View style={styles.statBox}>
+                        <Text style={styles.statValue}>12</Text>
+                        <Text style={styles.statLabel}>Total Pickups</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statBox}>
+                        <Text style={styles.statValue}>340</Text>
+                        <Text style={styles.statLabel}>Lifetime Points</Text>
+                    </View>
+                </View>
+            </LinearGradient>
+
+            <View style={styles.contentSection}>
+                <Text style={styles.sectionTitle}>Recent Orders</Text>
+
+                {MOCK_HISTORY_DATA.length === 0 ? (
+                    <View style={styles.emptyStateContainer}>
+                        <MaterialCommunityIcons name="history" size={80} color="#263345" style={{ marginBottom: 16 }} />
+                        <Text style={styles.emptyStateTitle}>No History found</Text>
+                        <Text style={styles.emptyStateDescription}>You don't have any past orders yet.</Text>
+                    </View>
+                ) : (
+                    MOCK_HISTORY_DATA.map((item) => (
+                        <View key={item.id} style={styles.historyCard}>
+                            <View style={styles.historyCardHeader}>
+                                <View>
+                                    <Text style={styles.historyOrdId}>{item.id}</Text>
+                                    <Text style={styles.historyType}>{item.type}</Text>
+                                </View>
+                                <View style={[styles.historyStatusBadge, item.status === 'Cancelled' ? styles.statusCancelled : styles.statusCompleted]}>
+                                    <Text style={[styles.historyStatusText, item.status === 'Cancelled' ? styles.statusTextCancelled : styles.statusTextCompleted]}>
+                                        {item.status}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.historyDivider} />
+
+                            <View style={styles.historyCardBody}>
+                                <View style={styles.historyDetailRow}>
+                                    <MaterialCommunityIcons name="calendar-clock" size={16} color="#7b8a9e" />
+                                    <Text style={styles.historyDetailText}>{item.date}, {item.time}</Text>
+                                </View>
+
+                                <View style={styles.historyMetricsRow}>
+                                    <View style={styles.historyMetricGroup}>
+                                        <MaterialCommunityIcons name="weight" size={16} color="#00c853" />
+                                        <Text style={styles.historyMetricText}>{item.weight}</Text>
+                                    </View>
+                                    <View style={styles.historyMetricGroup}>
+                                        <MaterialCommunityIcons name="leaf-circle" size={16} color="#00c853" />
+                                        <Text style={styles.historyMetricText}>{item.points}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        </View>
+                    ))
+                )}
+            </View>
+            <View style={{ height: 100 }} />
+        </ScrollView>
+    );
+};
+
+const ProfileContent = () => {
+    return (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            {/* Header Area */}
+            <LinearGradient
+                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                locations={[0, 0.5, 1]}
+                style={[styles.header, { paddingBottom: 30, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
+            >
+                <View style={styles.profileAvatarContainer}>
+                    <View style={styles.profileAvatar}>
+                        <MaterialCommunityIcons name="account" size={50} color="#00c853" />
+                    </View>
+                    <View style={styles.profileBadge}>
+                        <MaterialCommunityIcons name="check-decagram" size={20} color="#00c853" />
+                    </View>
+                </View>
+                <Text style={styles.profileName}>John Doe</Text>
+                <Text style={styles.profileEmail}>john.doe@example.com</Text>
+
+                <View style={styles.profileRoleTag}>
+                    <Text style={styles.profileRoleText}>Resident</Text>
+                </View>
+            </LinearGradient>
+
+            <View style={styles.contentSection}>
+                {/* Stats Section */}
+                <Text style={styles.sectionTitle}>Your Impact</Text>
+                <View style={styles.statsContainer}>
+                    <View style={styles.statBox}>
+                        <Text style={styles.statValue}>45</Text>
+                        <Text style={styles.statLabel}>kg Collected</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statBox}>
+                        <Text style={styles.statValue}>12</Text>
+                        <Text style={styles.statLabel}>Pickups</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statBox}>
+                        <Text style={styles.statValue}>120</Text>
+                        <Text style={styles.statLabel}>Eco-Points</Text>
+                    </View>
+                </View>
+
+                {/* Contact & Location */}
+                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Personal Details</Text>
+                <View style={styles.detailsCard}>
+                    <View style={styles.detailRow}>
+                        <View style={styles.detailIconBox}>
+                            <MaterialCommunityIcons name="home-outline" size={20} color="#00c853" />
+                        </View>
+                        <View style={styles.detailTextContainer}>
+                            <Text style={styles.detailLabel}>House / Flat No.</Text>
+                            <Text style={styles.detailValue}>Apt 402, Green Valley</Text>
+                        </View>
+                    </View>
+                    <View style={styles.detailDivider} />
+                    <View style={styles.detailRow}>
+                        <View style={styles.detailIconBox}>
+                            <MaterialCommunityIcons name="map-marker-outline" size={20} color="#00c853" />
+                        </View>
+                        <View style={styles.detailTextContainer}>
+                            <Text style={styles.detailLabel}>Address</Text>
+                            <Text style={styles.detailValue}>123 Eco Street, Trivandrum, Kerala 695001</Text>
+                        </View>
+                    </View>
+                    <View style={styles.detailDivider} />
+                    <View style={styles.detailRow}>
+                        <View style={styles.detailIconBox}>
+                            <MaterialCommunityIcons name="phone-outline" size={20} color="#00c853" />
+                        </View>
+                        <View style={styles.detailTextContainer}>
+                            <Text style={styles.detailLabel}>Phone Number</Text>
+                            <Text style={styles.detailValue}>+91 98765 43210</Text>
+                        </View>
+                    </View>
+                </View>
+
+                {/* Actions Menu */}
+                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Settings</Text>
+                <View style={styles.menuContainer}>
+                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                        <MaterialCommunityIcons name="account-edit-outline" size={24} color="#7b8a9e" />
+                        <Text style={styles.menuItemText}>Edit Profile</Text>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                        <MaterialCommunityIcons name="lock-outline" size={24} color="#7b8a9e" />
+                        <Text style={styles.menuItemText}>Change Password</Text>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                        <MaterialCommunityIcons name="help-circle-outline" size={24} color="#7b8a9e" />
+                        <Text style={styles.menuItemText}>Help & Support</Text>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                        <MaterialCommunityIcons name="file-document-outline" size={24} color="#7b8a9e" />
+                        <Text style={styles.menuItemText}>Terms & Privacy Policy</Text>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
+                    </TouchableOpacity>
+                </View>
+
+                {/* Logout Button */}
+                <TouchableOpacity style={styles.logoutButton} activeOpacity={0.8}>
+                    <MaterialCommunityIcons name="logout" size={20} color="#e53935" />
+                    <Text style={styles.logoutButtonText}>Log Out</Text>
+                </TouchableOpacity>
+
+            </View>
+            <View style={{ height: 100 }} />
+        </ScrollView>
+    );
+};
+
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
@@ -807,8 +1038,261 @@ const styles = StyleSheet.create({
         gap: 16,
     },
     inputCardError: {
-        borderColor: '#ff4d4f',
-        backgroundColor: '#1a0f0f',
+        borderColor: '#e53935',
+        backgroundColor: 'rgba(229, 57, 53, 0.05)',
+    },
+    // --- Profile Specific Styles ---
+    profileAvatarContainer: {
+        position: 'relative',
+        marginBottom: 16,
+    },
+    profileAvatar: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: 'rgba(0,200,83,0.1)',
+        borderWidth: 2,
+        borderColor: '#00c853',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#00c853',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
+        elevation: 8,
+    },
+    profileBadge: {
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        backgroundColor: '#0b1120',
+        borderRadius: 12,
+        padding: 2,
+    },
+    profileName: {
+        fontSize: 24,
+        fontWeight: '700',
+        color: '#ffffff',
+        marginBottom: 4,
+    },
+    profileEmail: {
+        fontSize: 15,
+        color: '#a0aec0',
+        marginBottom: 12,
+    },
+    profileRoleTag: {
+        backgroundColor: 'rgba(0,200,83,0.2)',
+        paddingHorizontal: 16,
+        paddingVertical: 6,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(0,200,83,0.5)',
+    },
+    profileRoleText: {
+        color: '#00e676',
+        fontWeight: '600',
+        fontSize: 13,
+    },
+    statsContainer: {
+        flexDirection: 'row',
+        backgroundColor: '#0f1a26',
+        borderRadius: 16,
+        padding: 20,
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#263345',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 4,
+    },
+    statBox: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    statValue: {
+        fontSize: 22,
+        fontWeight: '700',
+        color: '#00c853',
+        marginBottom: 4,
+    },
+    statLabel: {
+        fontSize: 12,
+        color: '#7b8a9e',
+        textAlign: 'center',
+    },
+    statDivider: {
+        width: 1,
+        height: 40,
+        backgroundColor: '#263345',
+    },
+    detailsCard: {
+        backgroundColor: '#0f1a26',
+        borderRadius: 16,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: '#263345',
+    },
+    detailRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        paddingVertical: 12,
+    },
+    detailIconBox: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0,200,83,0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 16,
+    },
+    detailTextContainer: {
+        flex: 1,
+    },
+    detailLabel: {
+        fontSize: 13,
+        color: '#7b8a9e',
+        marginBottom: 4,
+    },
+    detailValue: {
+        fontSize: 16,
+        color: '#e0eee6',
+        fontWeight: '500',
+        lineHeight: 22,
+    },
+    detailDivider: {
+        height: 1,
+        backgroundColor: '#263345',
+        marginLeft: 56, // Align with text
+    },
+    menuContainer: {
+        backgroundColor: '#0f1a26',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#263345',
+        overflow: 'hidden',
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#263345',
+    },
+    menuItemText: {
+        flex: 1,
+        fontSize: 16,
+        color: '#e0eee6',
+        marginLeft: 16,
+    },
+    logoutButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 32,
+        marginBottom: 20,
+        paddingVertical: 16,
+        backgroundColor: 'rgba(229, 57, 53, 0.1)',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(229, 57, 53, 0.3)',
+    },
+    logoutButtonText: {
+        color: '#e53935',
+        fontSize: 16,
+        fontWeight: '600',
+        marginLeft: 8,
+    },
+    // --- History Specific Styles ---
+    historyCard: {
+        backgroundColor: '#0f1a26',
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: '#263345',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    historyCardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 12,
+    },
+    historyOrdId: {
+        fontSize: 12,
+        color: '#7b8a9e',
+        marginBottom: 4,
+        fontWeight: '600',
+    },
+    historyType: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#e0eee6',
+    },
+    historyStatusBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 12,
+        borderWidth: 1,
+    },
+    statusCompleted: {
+        backgroundColor: 'rgba(0, 200, 83, 0.1)',
+        borderColor: 'rgba(0, 200, 83, 0.3)',
+    },
+    statusCancelled: {
+        backgroundColor: 'rgba(229, 57, 53, 0.1)',
+        borderColor: 'rgba(229, 57, 53, 0.3)',
+    },
+    historyStatusText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    statusTextCompleted: {
+        color: '#00e676',
+    },
+    statusTextCancelled: {
+        color: '#ff5252',
+    },
+    historyDivider: {
+        height: 1,
+        backgroundColor: '#1c2a3a',
+        marginBottom: 12,
+    },
+    historyCardBody: {
+        gap: 8,
+    },
+    historyDetailRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    historyDetailText: {
+        fontSize: 14,
+        color: '#a0aec0',
+    },
+    historyMetricsRow: {
+        flexDirection: 'row',
+        justifyContent: 'flex-start',
+        gap: 24,
+        marginTop: 4,
+    },
+    historyMetricGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    historyMetricText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#e0eee6',
     },
     inputText: {
         color: '#e0eee6',

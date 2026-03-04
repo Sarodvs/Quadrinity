@@ -12,27 +12,33 @@ interface VerifyResult {
     error?: string;
 }
 
+interface LoginResult {
+    success: boolean;
+    user?: any; // Mock user data
+    error?: string;
+}
+
 const authService = {
     /**
      * Send OTP - Mock implementation
      * Always succeeds and returns a mock verification ID
      */
     sendOTP: async (
-        phoneNumber: string,
+        email: string,
         recaptchaVerifier?: any
     ): Promise<OTPResult> => {
         try {
             // Simulate sending OTP
             // In a real scenario, this would call a backend API
-            if (!phoneNumber || phoneNumber.trim() === '') {
+            if (!email || email.trim() === '') {
                 return {
                     success: false,
-                    error: 'Phone number is required',
+                    error: 'Email address is required',
                 };
             }
 
             // Create a mock verification ID
-            const mockVerificationId = `mock_${phoneNumber}_${Date.now()}`;
+            const mockVerificationId = `mock_${email}_${Date.now()}`;
 
             // Simulate network delay
             await new Promise((resolve) => setTimeout(resolve, 500));
@@ -92,14 +98,14 @@ const authService = {
      */
     registerUser: async (userData: any): Promise<OTPResult> => {
         try {
-            if (!userData.mobile) {
+            if (!userData.email) {
                 return {
                     success: false,
-                    error: 'Mobile number is required',
+                    error: 'Email address is required',
                 };
             }
 
-            const mockVerificationId = `mock_reg_${userData.mobile}_${Date.now()}`;
+            const mockVerificationId = `mock_reg_${userData.email}_${Date.now()}`;
 
             await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -107,6 +113,69 @@ const authService = {
                 success: true,
                 verificationId: mockVerificationId,
             };
+        } catch (error: any) {
+            return {
+                success: false,
+                error: error.message || 'Failed to register',
+            };
+        }
+    },
+
+    /**
+     * Login with Email and Password - Mock implementation
+     */
+    loginWithEmailAndPassword: async (email: string, password: string): Promise<LoginResult> => {
+        try {
+            if (!email || email.trim() === '') {
+                return { success: false, error: 'Email address is required' };
+            }
+            if (!password || password.trim() === '') {
+                return { success: false, error: 'Password is required' };
+            }
+
+            // Simulate network delay
+            await new Promise((resolve) => setTimeout(resolve, 800));
+
+            // Hardcorded credentials check for Demo purposes
+            if (email === "test@test.com" && password === "password123") {
+                return {
+                    success: true,
+                    user: { id: "mock_user_1", email: "test@test.com", name: "Test User" }
+                };
+            }
+
+            return {
+                success: true,
+                user: { id: `mock_${Date.now()}`, email, name: email.split("@")[0] }
+            }
+
+        } catch (error: any) {
+            return {
+                success: false,
+                error: error.message || 'Failed to login',
+            };
+        }
+    },
+
+    /**
+ * Register with Email and Password - Mock implementation
+ */
+    registerWithEmailAndPassword: async (userData: any): Promise<LoginResult> => {
+        try {
+            if (!userData.email) {
+                return { success: false, error: 'Email address is required' };
+            }
+            if (!userData.password) {
+                return { success: false, error: 'Password is required' };
+            }
+
+            // Simulate network delay
+            await new Promise((resolve) => setTimeout(resolve, 800));
+
+            return {
+                success: true,
+                user: { id: `mock_${Date.now()}`, email: userData.email, name: userData.name || userData.email.split("@")[0] }
+            }
         } catch (error: any) {
             return {
                 success: false,
