@@ -1,10 +1,11 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useState } from 'react';
 import {
+    Alert,
     Dimensions,
     Image,
+    Linking,
     SafeAreaView,
     ScrollView,
     StatusBar,
@@ -148,113 +149,155 @@ export default function HomeScreen() {
 
 // --- Sub Components ---
 
-const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) => (
-    <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-    >
-        {/* Header */}
-        <LinearGradient
-            colors={['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120']}
-            locations={[0, 0.4, 0.7, 1]}
-            style={styles.header}
+const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) => {
+    const handleUPIPayment = async () => {
+        // Example UPI URI structure
+        const upiUri = 'upi://pay?pa=haritham@upi&pn=Haritham&am=1.00&cu=INR';
+
+        try {
+            const supported = await Linking.canOpenURL(upiUri);
+            if (supported) {
+                await Linking.openURL(upiUri);
+            } else {
+                Alert.alert("Error", "No UPI app found on this device.");
+            }
+        } catch (error) {
+            Alert.alert("Error", "Failed to open UPI app.");
+        }
+    };
+
+    return (
+        <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
         >
-            <View style={styles.logoContainer}>
-                <Image
-                    source={require('../assets/images/LOGO.png')}
-                    style={styles.logoImage}
-                    resizeMode="contain"
-                />
-                <View style={styles.taglineContainer}>
-                    <Text style={styles.taglineStart}>Your Waste</Text>
-                    <Text style={styles.taglineEnd}>Our Responsibility</Text>
+            {/* Header */}
+            <LinearGradient
+                colors={['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120']}
+                locations={[0, 0.4, 0.7, 1]}
+                style={styles.header}
+            >
+                <View style={styles.logoContainer}>
+                    <Image
+                        source={require('../assets/images/LOGO.png')}
+                        style={styles.logoImage}
+                        resizeMode="contain"
+                    />
+                    <View style={styles.taglineContainer}>
+                        <Text style={styles.taglineStart}>Your Waste</Text>
+                        <Text style={styles.taglineEnd}>Our Responsibility</Text>
+                    </View>
                 </View>
+
+                {/* Faint Background Icons Pattern */}
+                <MaterialCommunityIcons name="recycle" size={60} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { top: 20, left: -10 }]} />
+                <MaterialCommunityIcons name="recycle" size={50} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { top: 10, right: 10 }]} />
+                <MaterialCommunityIcons name="recycle" size={40} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { bottom: 20, left: 30 }]} />
+            </LinearGradient>
+
+            <View style={styles.divider} />
+
+            {/* Content Section */}
+            <View style={styles.contentSection}>
+                {/* Book Appointment Card */}
+                <Text style={styles.sectionTitle}>Book Your Appointment</Text>
+                <TouchableOpacity activeOpacity={0.9} onPress={onBookAppointment}>
+                    <LinearGradient
+                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.card}
+                    >
+                        <View style={styles.iconBox}>
+                            <LinearGradient
+                                colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
+                                style={styles.iconGradient}
+                            >
+                                <MaterialCommunityIcons name="recycle" size={28} color="#00c853" />
+                            </LinearGradient>
+                        </View>
+                        <View style={styles.cardContent}>
+                            <Text style={styles.cardTitle}>Scrap/Recyclable Waste</Text>
+                            <Text style={styles.cardSubtitle}>Book a collection and earn cash</Text>
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
+                    </LinearGradient>
+                </TouchableOpacity>
+
+                {/* Collection Points Card */}
+                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Collection Points Near Me</Text>
+                <TouchableOpacity activeOpacity={0.9}>
+                    <LinearGradient
+                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.card}
+                    >
+                        <View style={styles.iconBox}>
+                            <LinearGradient
+                                colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
+                                style={styles.iconGradient}
+                            >
+                                <MaterialCommunityIcons name="map-marker-outline" size={28} color="#00c853" />
+                            </LinearGradient>
+                        </View>
+                        <View style={styles.cardContent}>
+                            <Text style={styles.cardTitle}>Find Collection Points</Text>
+                            <Text style={styles.cardSubtitle}>Locate nearby waste collection centers</Text>
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
+                    </LinearGradient>
+                </TouchableOpacity>
+
+                {/* Your Contribution Section */}
+                <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 20 }]}>Your Contribution</Text>
+                <View style={styles.contributionContainer}>
+                    {/* Circular Progress Mock */}
+                    <View style={styles.circularProgress}>
+                        <View style={styles.innerCircle}>
+                            <Text style={styles.contributionValue}>0.00</Text>
+                            <Text style={styles.contributionUnit}>kg</Text>
+                        </View>
+                        {/* Ring borders */}
+                        <View style={styles.ringBackground} />
+                        <View style={styles.ringProgress} />
+                    </View>
+
+                    <View style={styles.wasteTypeTag}>
+                        <MaterialCommunityIcons name="leaf" size={14} color="#00c853" />
+                        <Text style={styles.wasteTypeText}>Scrap Waste</Text>
+                    </View>
+                </View>
+
+                {/* Payments Section */}
+                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Payments & Bills</Text>
+                <TouchableOpacity activeOpacity={0.9} onPress={handleUPIPayment}>
+                    <LinearGradient
+                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.card}
+                    >
+                        <View style={styles.iconBox}>
+                            <LinearGradient
+                                colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
+                                style={styles.iconGradient}
+                            >
+                                <MaterialCommunityIcons name="credit-card-outline" size={28} color="#00c853" />
+                            </LinearGradient>
+                        </View>
+                        <View style={styles.cardContent}>
+                            <Text style={styles.cardTitle}>Make a Payment</Text>
+                            <Text style={styles.cardSubtitle}>Pay securely via UPI (GPay, PhonePe, etc.)</Text>
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
+                    </LinearGradient>
+                </TouchableOpacity>
+
             </View>
-
-            {/* Faint Background Icons Pattern */}
-            <MaterialCommunityIcons name="recycle" size={60} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { top: 20, left: -10 }]} />
-            <MaterialCommunityIcons name="recycle" size={50} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { top: 10, right: 10 }]} />
-            <MaterialCommunityIcons name="recycle" size={40} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { bottom: 20, left: 30 }]} />
-        </LinearGradient>
-
-        <View style={styles.divider} />
-
-        {/* Content Section */}
-        <View style={styles.contentSection}>
-            {/* Book Appointment Card */}
-            <Text style={styles.sectionTitle}>Book Your Appointment</Text>
-            <TouchableOpacity activeOpacity={0.9} onPress={onBookAppointment}>
-                <LinearGradient
-                    colors={['#0f2d1a', '#0c1e14', '#0b1518']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.card}
-                >
-                    <View style={styles.iconBox}>
-                        <LinearGradient
-                            colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
-                            style={styles.iconGradient}
-                        >
-                            <MaterialCommunityIcons name="recycle" size={28} color="#00c853" />
-                        </LinearGradient>
-                    </View>
-                    <View style={styles.cardContent}>
-                        <Text style={styles.cardTitle}>Scrap/Recyclable Waste</Text>
-                        <Text style={styles.cardSubtitle}>Book a collection and earn cash</Text>
-                    </View>
-                    <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
-                </LinearGradient>
-            </TouchableOpacity>
-
-            {/* Collection Points Card */}
-            <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Collection Points Near Me</Text>
-            <TouchableOpacity activeOpacity={0.9}>
-                <LinearGradient
-                    colors={['#0f2d1a', '#0c1e14', '#0b1518']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.card}
-                >
-                    <View style={styles.iconBox}>
-                        <LinearGradient
-                            colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
-                            style={styles.iconGradient}
-                        >
-                            <MaterialCommunityIcons name="map-marker-outline" size={28} color="#00c853" />
-                        </LinearGradient>
-                    </View>
-                    <View style={styles.cardContent}>
-                        <Text style={styles.cardTitle}>Find Collection Points</Text>
-                        <Text style={styles.cardSubtitle}>Locate nearby waste collection centers</Text>
-                    </View>
-                    <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
-                </LinearGradient>
-            </TouchableOpacity>
-
-            {/* Your Contribution Section */}
-            <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 20 }]}>Your Contribution</Text>
-            <View style={styles.contributionContainer}>
-                {/* Circular Progress Mock */}
-                <View style={styles.circularProgress}>
-                    <View style={styles.innerCircle}>
-                        <Text style={styles.contributionValue}>0.00</Text>
-                        <Text style={styles.contributionUnit}>kg</Text>
-                    </View>
-                    {/* Ring borders */}
-                    <View style={styles.ringBackground} />
-                    <View style={styles.ringProgress} />
-                </View>
-
-                <View style={styles.wasteTypeTag}>
-                    <MaterialCommunityIcons name="leaf" size={14} color="#00c853" />
-                    <Text style={styles.wasteTypeText}>Scrap Waste</Text>
-                </View>
-            </View>
-
-            <View style={{ height: 100 }} />
-        </View>
-    </ScrollView>
-);
+        </ScrollView>
+    );
+};
 
 const BookingContent = ({
     selectedDate,
@@ -275,141 +318,122 @@ const BookingContent = ({
     onConfirm: () => void,
     onCancel: () => void
 }) => {
-    const [showDatePicker, setShowDatePicker] = useState(false);
-    const [showStartTimePicker, setShowStartTimePicker] = useState(false);
-    const [showEndTimePicker, setShowEndTimePicker] = useState(false);
-
-    // Validation Logic
-    const isWorkingHours = (date: Date) => {
-        const hours = date.getHours();
-        return hours >= 9 && hours < 17;
-    };
-
-    const isStartTimeValid = startTime ? isWorkingHours(startTime) : true;
-    const isEndTimeValid = endTime ? isWorkingHours(endTime) : true;
-    const isRangeValid = startTime && endTime ? endTime > startTime : true;
-
-    const isReady = selectedDate && startTime && endTime && isStartTimeValid && isEndTimeValid && isRangeValid;
-
-    const onDateChangeHandler = (event: any, date?: Date) => {
-        setShowDatePicker(false);
-        if (date) {
-            onDateChange(date);
-        }
-    };
-
-    const onStartTimeChangeHandler = (event: any, time?: Date) => {
-        setShowStartTimePicker(false);
-        if (time) {
-            onStartTimeChange(time);
-        }
-    };
-
-    const onEndTimeChangeHandler = (event: any, time?: Date) => {
-        setShowEndTimePicker(false);
-        if (time) {
-            onEndTimeChange(time);
-        }
-    };
+    const isConfirmEnabled = selectedDate && startTime && endTime;
 
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <View style={[styles.header, { paddingTop: 40, paddingBottom: 10 }]}>
-                {/* Reusing header style but with back button */}
-                <TouchableOpacity onPress={onCancel} style={{ position: 'absolute', left: 20, top: 45, zIndex: 20 }}>
-                    <MaterialCommunityIcons name="arrow-left" size={28} color="#e0eee6" />
-                </TouchableOpacity>
-                <Text style={[styles.sectionTitle, { marginBottom: 0, marginTop: 5 }]}>Book Appointment</Text>
-            </View>
+            {/* Header */}
+            <LinearGradient
+                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                locations={[0, 0.5, 1]}
+                style={[styles.header, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
+            >
+                <Text style={styles.profileName}>Schedule Pickup</Text>
+                <Text style={styles.profileEmail}>Select a convenient time for collection</Text>
+            </LinearGradient>
 
             <View style={styles.contentSection}>
+                {/* Date Selection */}
                 <Text style={styles.inputLabel}>Select Date</Text>
-                <TouchableOpacity onPress={() => setShowDatePicker(true)} activeOpacity={0.8}>
-                    <View style={styles.inputCard}>
-                        <MaterialCommunityIcons name="calendar" size={24} color="#00c853" />
-                        <Text style={[styles.inputText, !selectedDate && styles.placeholderText]}>
-                            {selectedDate ? selectedDate.toLocaleDateString() : 'DD / MM / YYYY'}
+                <View style={styles.card}>
+                    <View style={[styles.iconBox, { width: 48, height: 48 }]}>
+                        <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
+                            <MaterialCommunityIcons name="calendar-month" size={24} color="#00c853" />
+                        </LinearGradient>
+                    </View>
+                    <View style={styles.cardContent}>
+                        <Text style={selectedDate ? styles.inputText : styles.placeholderText}>
+                            {selectedDate ? selectedDate.toLocaleDateString() : 'Choose a date'}
                         </Text>
                     </View>
-                </TouchableOpacity>
+                    <TouchableOpacity onPress={() => onDateChange(new Date())}>
+                        <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* Time Selection */}
+                <Text style={[styles.inputLabel, { marginTop: 24 }]}>Select Time Window</Text>
 
                 <View style={styles.timeRowsContainer}>
+                    {/* Start Time */}
                     <View style={styles.timeRow}>
-                        <Text style={[styles.inputLabel, { marginTop: 24 }]}>From Time (9AM - 5PM)</Text>
-                        <TouchableOpacity onPress={() => setShowStartTimePicker(true)} activeOpacity={0.8}>
-                            <View style={[styles.inputCard, !isStartTimeValid && styles.inputCardError]}>
-                                <MaterialCommunityIcons name="clock-start" size={24} color="#00c853" />
-                                <Text style={[styles.inputText, !startTime && styles.placeholderText, !isStartTimeValid && styles.errorText]}>
-                                    {startTime ? startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'HH : MM'}
+                        <Text style={[styles.inputLabel, { fontSize: 13, color: '#7b8a9e', marginBottom: 8, marginTop: 8 }]}>From Time</Text>
+                        <View style={styles.card}>
+                            <View style={[styles.iconBox, { width: 48, height: 48 }]}>
+                                <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
+                                    <MaterialCommunityIcons name="clock-start" size={24} color="#00c853" />
+                                </LinearGradient>
+                            </View>
+                            <View style={styles.cardContent}>
+                                <Text style={startTime ? styles.inputText : styles.placeholderText}>
+                                    {startTime ? startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Start Time'}
                                 </Text>
                             </View>
-                        </TouchableOpacity>
-                        {!isStartTimeValid && <Text style={styles.errorLabel}>Must be between 9 AM and 5 PM</Text>}
+                            <TouchableOpacity onPress={() => onStartTimeChange(new Date(new Date().setHours(9, 0, 0, 0)))}>
+                                <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
 
+                    {/* End Time */}
                     <View style={styles.timeRow}>
-                        <Text style={[styles.inputLabel, { marginTop: 24 }]}>To Time (9AM - 5PM)</Text>
-                        <TouchableOpacity onPress={() => setShowEndTimePicker(true)} activeOpacity={0.8}>
-                            <View style={[styles.inputCard, (!isEndTimeValid || !isRangeValid) && styles.inputCardError]}>
-                                <MaterialCommunityIcons name="clock-end" size={24} color="#00c853" />
-                                <Text style={[styles.inputText, !endTime && styles.placeholderText, (!isEndTimeValid || !isRangeValid) && styles.errorText]}>
-                                    {endTime ? endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'HH : MM'}
+                        <Text style={[styles.inputLabel, { fontSize: 13, color: '#7b8a9e', marginBottom: 8, marginTop: 16 }]}>To Time</Text>
+                        <View style={styles.card}>
+                            <View style={[styles.iconBox, { width: 48, height: 48 }]}>
+                                <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
+                                    <MaterialCommunityIcons name="clock-end" size={24} color="#00c853" />
+                                </LinearGradient>
+                            </View>
+                            <View style={styles.cardContent}>
+                                <Text style={endTime ? styles.inputText : styles.placeholderText}>
+                                    {endTime ? endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'End Time'}
                                 </Text>
                             </View>
-                        </TouchableOpacity>
-                        {!isEndTimeValid && <Text style={styles.errorLabel}>Must be between 9 AM and 5 PM</Text>}
-                        {endTime && !isRangeValid && isEndTimeValid && <Text style={styles.errorLabel}>End time must be after start time</Text>}
+                            <TouchableOpacity onPress={() => {
+                                const end = new Date();
+                                end.setHours(11, 0, 0, 0);
+                                onEndTimeChange(end);
+                            }}>
+                                <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
 
-                {showDatePicker && (
-                    <DateTimePicker
-                        value={selectedDate || new Date()}
-                        mode="date"
-                        display="default"
-                        onChange={onDateChangeHandler}
-                        minimumDate={new Date()}
-                    />
-                )}
-
-                {showStartTimePicker && (
-                    <DateTimePicker
-                        value={startTime || new Date()}
-                        mode="time"
-                        display="default"
-                        onChange={onStartTimeChangeHandler}
-                    />
-                )}
-
-                {showEndTimePicker && (
-                    <DateTimePicker
-                        value={endTime || new Date()}
-                        mode="time"
-                        display="default"
-                        onChange={onEndTimeChangeHandler}
-                    />
-                )}
-
-                <View style={{ marginTop: 40 }}>
+                {/* Actions */}
+                <View style={{ marginTop: 40, gap: 16 }}>
                     <TouchableOpacity
-                        onPress={onConfirm}
                         activeOpacity={0.8}
-                        disabled={!isReady}
+                        onPress={onConfirm}
+                        disabled={!isConfirmEnabled}
                     >
                         <LinearGradient
-                            colors={isReady ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
-                            style={[styles.confirmButton, !isReady && styles.confirmButtonDisabled]}
+                            colors={isConfirmEnabled ? ['#00c853', '#009624'] : ['#1a2938', '#131f2b']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={[styles.confirmButton, !isConfirmEnabled && styles.confirmButtonDisabled]}
                         >
-                            <Text style={[styles.confirmButtonText, !isReady && styles.confirmButtonTextDisabled]}>
-                                Book Appointment
+                            <Text style={[styles.confirmButtonText, !isConfirmEnabled && styles.confirmButtonTextDisabled]}>
+                                Confirm Booking
                             </Text>
                         </LinearGradient>
                     </TouchableOpacity>
+
+                    <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={onCancel}
+                        style={[styles.confirmButton, { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#263345' }]}
+                    >
+                        <Text style={[styles.confirmButtonText, { color: '#e0eee6' }]}>Cancel</Text>
+                    </TouchableOpacity>
                 </View>
+
             </View>
+            <View style={{ height: 100 }} />
         </ScrollView>
     );
 };
+
 
 const OrdersContent = ({ orders, onSchedulePickup }: { orders: Order[], onSchedulePickup: () => void }) => {
     if (orders.length === 0) {
