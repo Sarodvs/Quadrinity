@@ -1,0 +1,851 @@
+import React, { useState } from 'react';
+import {
+    View,
+    Text,
+    StyleSheet,
+    ScrollView,
+    TouchableOpacity,
+    Image,
+    SafeAreaView,
+    StatusBar,
+    Dimensions,
+    Platform,
+} from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import DateTimePicker from '@react-native-community/datetimepicker';
+
+const { width } = Dimensions.get('window');
+
+// Mock Data for Bottom Nav
+const NAV_ITEMS = [
+    { id: 'home', label: 'Home', icon: 'home-outline', iconActive: 'home' },
+    { id: 'orders', label: 'Orders', icon: 'clipboard-text-outline', iconActive: 'clipboard-text' },
+    { id: 'history', label: 'History', icon: 'clock-outline', iconActive: 'clock' },
+    { id: 'profile', label: 'Profile', icon: 'account-outline', iconActive: 'account' },
+];
+
+interface Order {
+    id: string;
+    type: string;
+    date: string;
+    time: string;
+    status: string;
+}
+
+export default function HomeScreen() {
+    const [activeTab, setActiveTab] = useState('home');
+    const [orders, setOrders] = useState<Order[]>([]);
+
+    // Booking State
+    const [isBooking, setIsBooking] = useState(false);
+    const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+    const [startTime, setStartTime] = useState<Date | null>(null);
+    const [endTime, setEndTime] = useState<Date | null>(null);
+
+    const handleStartBooking = () => {
+        setIsBooking(true);
+        setSelectedDate(null);
+        setStartTime(null);
+        setEndTime(null);
+    };
+
+    const handleConfirmBooking = () => {
+        if (!selectedDate || !startTime || !endTime) return;
+
+        const timeString = `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+        const newOrder: Order = {
+            id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+            type: 'Scrap/Recyclable Waste',
+            date: selectedDate.toLocaleDateString(),
+            time: timeString,
+            status: 'Scheduled',
+        };
+        setOrders([newOrder, ...orders]);
+        setIsBooking(false);
+        setActiveTab('orders');
+    };
+
+    const handleCancelBooking = () => {
+        setIsBooking(false);
+    };
+
+    const handleSchedulePickup = () => {
+        setIsBooking(true);
+        setActiveTab('home');
+        setSelectedDate(null);
+        setStartTime(null);
+        setEndTime(null);
+    };
+
+    const handleTabChange = (tabId: string) => {
+        setActiveTab(tabId);
+        if (isBooking) setIsBooking(false);
+    };
+
+    return (
+        <SafeAreaView style={styles.safeArea}>
+            <StatusBar barStyle="light-content" />
+            <View style={styles.container}>
+
+                {activeTab === 'home' && !isBooking && (
+                    <HomeContent onBookAppointment={handleStartBooking} />
+                )}
+
+                {activeTab === 'home' && isBooking && (
+                    <BookingContent
+                        selectedDate={selectedDate}
+                        startTime={startTime}
+                        endTime={endTime}
+                        onDateChange={setSelectedDate}
+                        onStartTimeChange={setStartTime}
+                        onEndTimeChange={setEndTime}
+                        onConfirm={handleConfirmBooking}
+                        onCancel={handleCancelBooking}
+                    />
+                )}
+
+                {activeTab === 'orders' && (
+                    <OrdersContent orders={orders} onSchedulePickup={handleSchedulePickup} />
+                )}
+
+                {/* Placeholders for other tabs */}
+                {activeTab === 'history' && <PlaceholderContent title="History" />}
+                {activeTab === 'profile' && <PlaceholderContent title="Profile" />}
+
+                {/* Bottom Navigation */}
+                <View style={styles.bottomNav}>
+                    {NAV_ITEMS.map((item) => {
+                        const isActive = activeTab === item.id;
+                        return (
+                            <TouchableOpacity
+                                key={item.id}
+                                onPress={() => handleTabChange(item.id)}
+                                style={styles.navItem}
+                            >
+                                <View style={[styles.navIconContainer, isActive && styles.navIconActive]}>
+                                    <LinearGradient
+                                        colors={isActive ? ['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.08)'] : ['transparent', 'transparent']}
+                                        style={StyleSheet.absoluteFillObject}
+                                    />
+                                    <MaterialCommunityIcons
+                                        name={isActive ? (item.iconActive as any) : (item.icon as any)}
+                                        size={24}
+                                        color={isActive ? '#00c853' : '#3e5068'}
+                                    />
+                                </View>
+                                <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>
+                                    {item.label}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
+            </View>
+        </SafeAreaView>
+    );
+}
+
+// --- Sub Components ---
+
+const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) => (
+    <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+    >
+        {/* Header */}
+        <LinearGradient
+            colors={['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120']}
+            locations={[0, 0.4, 0.7, 1]}
+            style={styles.header}
+        >
+            <View style={styles.logoContainer}>
+                <Image
+                    source={require('../assets/images/LOGO.png')}
+                    style={styles.logoImage}
+                    resizeMode="contain"
+                />
+                <View style={styles.taglineContainer}>
+                    <Text style={styles.taglineStart}>Your Waste</Text>
+                    <Text style={styles.taglineEnd}>Our Responsibility</Text>
+                </View>
+            </View>
+
+            {/* Faint Background Icons Pattern */}
+            <MaterialCommunityIcons name="recycle" size={60} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { top: 20, left: -10 }]} />
+            <MaterialCommunityIcons name="recycle" size={50} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { top: 10, right: 10 }]} />
+            <MaterialCommunityIcons name="recycle" size={40} color="rgba(0, 230, 118, 0.05)" style={[styles.bgIcon, { bottom: 20, left: 30 }]} />
+        </LinearGradient>
+
+        <View style={styles.divider} />
+
+        {/* Content Section */}
+        <View style={styles.contentSection}>
+            {/* Book Appointment Card */}
+            <Text style={styles.sectionTitle}>Book Your Appointment</Text>
+            <TouchableOpacity activeOpacity={0.9} onPress={onBookAppointment}>
+                <LinearGradient
+                    colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.card}
+                >
+                    <View style={styles.iconBox}>
+                        <LinearGradient
+                            colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
+                            style={styles.iconGradient}
+                        >
+                            <MaterialCommunityIcons name="recycle" size={28} color="#00c853" />
+                        </LinearGradient>
+                    </View>
+                    <View style={styles.cardContent}>
+                        <Text style={styles.cardTitle}>Scrap/Recyclable Waste</Text>
+                        <Text style={styles.cardSubtitle}>Book a collection and earn cash</Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
+                </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Collection Points Card */}
+            <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Collection Points Near Me</Text>
+            <TouchableOpacity activeOpacity={0.9}>
+                <LinearGradient
+                    colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.card}
+                >
+                    <View style={styles.iconBox}>
+                        <LinearGradient
+                            colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
+                            style={styles.iconGradient}
+                        >
+                            <MaterialCommunityIcons name="map-marker-outline" size={28} color="#00c853" />
+                        </LinearGradient>
+                    </View>
+                    <View style={styles.cardContent}>
+                        <Text style={styles.cardTitle}>Find Collection Points</Text>
+                        <Text style={styles.cardSubtitle}>Locate nearby waste collection centers</Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
+                </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Your Contribution Section */}
+            <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 20 }]}>Your Contribution</Text>
+            <View style={styles.contributionContainer}>
+                {/* Circular Progress Mock */}
+                <View style={styles.circularProgress}>
+                    <View style={styles.innerCircle}>
+                        <Text style={styles.contributionValue}>0.00</Text>
+                        <Text style={styles.contributionUnit}>kg</Text>
+                    </View>
+                    {/* Ring borders */}
+                    <View style={styles.ringBackground} />
+                    <View style={styles.ringProgress} />
+                </View>
+
+                <View style={styles.wasteTypeTag}>
+                    <MaterialCommunityIcons name="leaf" size={14} color="#00c853" />
+                    <Text style={styles.wasteTypeText}>Scrap Waste</Text>
+                </View>
+            </View>
+
+            <View style={{ height: 100 }} />
+        </View>
+    </ScrollView>
+);
+
+const BookingContent = ({
+    selectedDate,
+    startTime,
+    endTime,
+    onDateChange,
+    onStartTimeChange,
+    onEndTimeChange,
+    onConfirm,
+    onCancel
+}: {
+    selectedDate: Date | null,
+    startTime: Date | null,
+    endTime: Date | null,
+    onDateChange: (date: Date) => void,
+    onStartTimeChange: (time: Date) => void,
+    onEndTimeChange: (time: Date) => void,
+    onConfirm: () => void,
+    onCancel: () => void
+}) => {
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [showStartTimePicker, setShowStartTimePicker] = useState(false);
+    const [showEndTimePicker, setShowEndTimePicker] = useState(false);
+
+    // Validation Logic
+    const isWorkingHours = (date: Date) => {
+        const hours = date.getHours();
+        return hours >= 9 && hours < 17;
+    };
+
+    const isStartTimeValid = startTime ? isWorkingHours(startTime) : true;
+    const isEndTimeValid = endTime ? isWorkingHours(endTime) : true;
+    const isRangeValid = startTime && endTime ? endTime > startTime : true;
+
+    const isReady = selectedDate && startTime && endTime && isStartTimeValid && isEndTimeValid && isRangeValid;
+
+    const onDateChangeHandler = (event: any, date?: Date) => {
+        setShowDatePicker(false);
+        if (date) {
+            onDateChange(date);
+        }
+    };
+
+    const onStartTimeChangeHandler = (event: any, time?: Date) => {
+        setShowStartTimePicker(false);
+        if (time) {
+            onStartTimeChange(time);
+        }
+    };
+
+    const onEndTimeChangeHandler = (event: any, time?: Date) => {
+        setShowEndTimePicker(false);
+        if (time) {
+            onEndTimeChange(time);
+        }
+    };
+
+    return (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <View style={[styles.header, { paddingTop: 40, paddingBottom: 10 }]}>
+                {/* Reusing header style but with back button */}
+                <TouchableOpacity onPress={onCancel} style={{ position: 'absolute', left: 20, top: 45, zIndex: 20 }}>
+                    <MaterialCommunityIcons name="arrow-left" size={28} color="#e0eee6" />
+                </TouchableOpacity>
+                <Text style={[styles.sectionTitle, { marginBottom: 0, marginTop: 5 }]}>Book Appointment</Text>
+            </View>
+
+            <View style={styles.contentSection}>
+                <Text style={styles.inputLabel}>Select Date</Text>
+                <TouchableOpacity onPress={() => setShowDatePicker(true)} activeOpacity={0.8}>
+                    <View style={styles.inputCard}>
+                        <MaterialCommunityIcons name="calendar" size={24} color="#00c853" />
+                        <Text style={[styles.inputText, !selectedDate && styles.placeholderText]}>
+                            {selectedDate ? selectedDate.toLocaleDateString() : 'DD / MM / YYYY'}
+                        </Text>
+                    </View>
+                </TouchableOpacity>
+
+                <View style={styles.timeRowsContainer}>
+                    <View style={styles.timeRow}>
+                        <Text style={[styles.inputLabel, { marginTop: 24 }]}>From Time (9AM - 5PM)</Text>
+                        <TouchableOpacity onPress={() => setShowStartTimePicker(true)} activeOpacity={0.8}>
+                            <View style={[styles.inputCard, !isStartTimeValid && styles.inputCardError]}>
+                                <MaterialCommunityIcons name="clock-start" size={24} color="#00c853" />
+                                <Text style={[styles.inputText, !startTime && styles.placeholderText, !isStartTimeValid && styles.errorText]}>
+                                    {startTime ? startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'HH : MM'}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+                        {!isStartTimeValid && <Text style={styles.errorLabel}>Must be between 9 AM and 5 PM</Text>}
+                    </View>
+
+                    <View style={styles.timeRow}>
+                        <Text style={[styles.inputLabel, { marginTop: 24 }]}>To Time (9AM - 5PM)</Text>
+                        <TouchableOpacity onPress={() => setShowEndTimePicker(true)} activeOpacity={0.8}>
+                            <View style={[styles.inputCard, (!isEndTimeValid || !isRangeValid) && styles.inputCardError]}>
+                                <MaterialCommunityIcons name="clock-end" size={24} color="#00c853" />
+                                <Text style={[styles.inputText, !endTime && styles.placeholderText, (!isEndTimeValid || !isRangeValid) && styles.errorText]}>
+                                    {endTime ? endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'HH : MM'}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+                        {!isEndTimeValid && <Text style={styles.errorLabel}>Must be between 9 AM and 5 PM</Text>}
+                        {endTime && !isRangeValid && isEndTimeValid && <Text style={styles.errorLabel}>End time must be after start time</Text>}
+                    </View>
+                </View>
+
+                {showDatePicker && (
+                    <DateTimePicker
+                        value={selectedDate || new Date()}
+                        mode="date"
+                        display="default"
+                        onChange={onDateChangeHandler}
+                        minimumDate={new Date()}
+                    />
+                )}
+
+                {showStartTimePicker && (
+                    <DateTimePicker
+                        value={startTime || new Date()}
+                        mode="time"
+                        display="default"
+                        onChange={onStartTimeChangeHandler}
+                    />
+                )}
+
+                {showEndTimePicker && (
+                    <DateTimePicker
+                        value={endTime || new Date()}
+                        mode="time"
+                        display="default"
+                        onChange={onEndTimeChangeHandler}
+                    />
+                )}
+
+                <View style={{ marginTop: 40 }}>
+                    <TouchableOpacity
+                        onPress={onConfirm}
+                        activeOpacity={0.8}
+                        disabled={!isReady}
+                    >
+                        <LinearGradient
+                            colors={isReady ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
+                            style={[styles.confirmButton, !isReady && styles.confirmButtonDisabled]}
+                        >
+                            <Text style={[styles.confirmButtonText, !isReady && styles.confirmButtonTextDisabled]}>
+                                Book Appointment
+                            </Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </ScrollView>
+    );
+};
+
+const OrdersContent = ({ orders, onSchedulePickup }: { orders: Order[], onSchedulePickup: () => void }) => {
+    if (orders.length === 0) {
+        return (
+            <View style={styles.emptyStateContainer}>
+                {/* Visual Illustration */}
+                <View style={styles.emptyStateImageContainer}>
+                    {/* Using a combination of icons to mimic the green trash bin illustration */}
+                    <MaterialCommunityIcons name="trash-can" size={120} color="#00c853" />
+                    <View style={styles.emptyStateIconOverlay}>
+                        <MaterialCommunityIcons name="clipboard-text-outline" size={60} color="#0b1120" />
+                    </View>
+                </View>
+
+                <Text style={styles.emptyStateTitle}>No Orders Yet</Text>
+                <Text style={styles.emptyStateDescription}>
+                    You don't have any waste collection orders at the moment. Schedule a pickup to get started.
+                </Text>
+
+                <TouchableOpacity onPress={onSchedulePickup} activeOpacity={0.8}>
+                    <LinearGradient
+                        colors={['#00c853', '#009624']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.scheduleButton}
+                    >
+                        <MaterialCommunityIcons name="plus" size={24} color="#0b1120" style={{ marginRight: 8 }} />
+                        <Text style={styles.scheduleButtonText}>Schedule a Pickup</Text>
+                    </LinearGradient>
+                </TouchableOpacity>
+                <Text style={styles.emptyStateFooter}>Fast, reliable & eco-friendly collection</Text>
+            </View>
+        );
+    }
+
+    return (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <View style={[styles.contentSection, { paddingTop: 40 }]}>
+                <Text style={styles.sectionTitle}>Your Orders ({orders.length})</Text>
+                {orders.map((order) => (
+                    <LinearGradient
+                        key={order.id}
+                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.orderCard}
+                    >
+                        <View style={styles.orderHeader}>
+                            <Text style={styles.orderId}>Order #{order.id}</Text>
+                            <Text style={styles.orderStatus}>{order.status}</Text>
+                        </View>
+                        <Text style={styles.orderType}>{order.type}</Text>
+                        <View style={styles.orderFooter}>
+                            <MaterialCommunityIcons name="calendar" size={14} color="#7b8a9e" />
+                            <Text style={styles.orderDate}>{order.date}</Text>
+                            {order.time && (
+                                <>
+                                    <View style={{ width: 10 }} />
+                                    <MaterialCommunityIcons name="clock-outline" size={14} color="#7b8a9e" />
+                                    <Text style={styles.orderDate}>{order.time}</Text>
+                                </>
+                            )}
+                        </View>
+                    </LinearGradient>
+                ))}
+            </View>
+            <View style={{ height: 100 }} />
+        </ScrollView>
+    );
+};
+
+const PlaceholderContent = ({ title }: { title: string }) => (
+    <View style={styles.placeholderContainer}>
+        <Text style={styles.placeholderText}>{title} Coming Soon</Text>
+    </View>
+);
+
+const styles = StyleSheet.create({
+    safeArea: {
+        flex: 1,
+        backgroundColor: '#000000',
+    },
+    container: {
+        flex: 1,
+        backgroundColor: '#0b1120',
+        position: 'relative',
+    },
+    header: {
+        width: '100%',
+        paddingTop: 10,
+        paddingBottom: 20,
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    logoContainer: {
+        alignItems: 'center',
+        zIndex: 10,
+    },
+    logoImage: {
+        width: 200,
+        height: 130,
+        marginBottom: 10,
+    },
+    taglineContainer: {
+        alignItems: 'center',
+    },
+    taglineStart: {
+        fontSize: 18,
+        color: '#ffffffff',
+        fontWeight: '700',
+        letterSpacing: 0.5,
+        marginBottom: 2,
+    },
+    taglineEnd: {
+        fontSize: 18,
+        color: '#ffffffff',
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
+    bgIcon: {
+        position: 'absolute',
+    },
+    divider: {
+        height: 1,
+        backgroundColor: '#1c2a3a',
+        width: '100%',
+    },
+    scrollContent: {
+        paddingBottom: 100, // Space for bottom nav
+    },
+    contentSection: {
+        padding: 20,
+    },
+    sectionTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#d0d8e4',
+        marginBottom: 12,
+    },
+    card: {
+        width: '100%',
+        borderRadius: 16,
+        padding: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(0,200,83,0.16)',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 6,
+    },
+    iconBox: {
+        width: 54,
+        height: 54,
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    iconGradient: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(0,200,83,0.22)',
+        borderRadius: 16,
+    },
+    cardContent: {
+        flex: 1,
+    },
+    cardTitle: {
+        fontSize: 17,
+        fontWeight: '700',
+        color: '#e0eee6',
+        marginBottom: 4,
+    },
+    cardSubtitle: {
+        fontSize: 13,
+        color: '#7b8a9e',
+    },
+    contributionContainer: {
+        alignItems: 'center',
+        paddingBottom: 10,
+    },
+    circularProgress: {
+        width: 130,
+        height: 130,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    ringBackground: {
+        position: 'absolute',
+        width: 112,
+        height: 112,
+        borderRadius: 56,
+        borderWidth: 6,
+        borderColor: '#06e524ff',
+    },
+    ringProgress: {
+        position: 'absolute',
+        width: 112,
+        height: 112,
+        borderRadius: 56,
+        borderWidth: 6,
+        borderColor: '#06e524ff',
+        borderLeftColor: 'transparent', // Simple visual hack for "progress"
+        borderBottomColor: 'transparent',
+        transform: [{ rotate: '-45deg' }],
+    },
+    innerCircle: {
+        alignItems: 'center',
+    },
+    contributionValue: {
+        fontSize: 28,
+        fontWeight: '700',
+        color: '#e0f0e8',
+        lineHeight: 34,
+    },
+    contributionUnit: {
+        fontSize: 15,
+        color: '#7b8a9e',
+        marginTop: 2,
+    },
+    wasteTypeTag: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 14,
+    },
+    wasteTypeText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#7aaa8e',
+    },
+    bottomNav: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 70,
+        backgroundColor: 'rgba(11,17,32,0.95)',
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(0,200,83,0.12)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-around',
+        paddingBottom: 10, // Safe area padding manual adjustment
+    },
+    navItem: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        paddingHorizontal: 12,
+    },
+    navIconContainer: {
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    navIconActive: {
+        // Gradient background handled by child LinearGradient
+    },
+    navLabel: {
+        fontSize: 11,
+        color: '#3e5068',
+        fontWeight: '400',
+        letterSpacing: 0.2,
+    },
+    navLabelActive: {
+        color: '#00c853',
+        fontWeight: '700',
+    },
+    emptyStateContainer: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 30,
+        paddingBottom: 100,
+    },
+    emptyStateImageContainer: {
+        width: 140,
+        height: 140,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 24,
+        position: 'relative',
+    },
+    emptyStateIconOverlay: {
+        position: 'absolute',
+        right: -10,
+        bottom: 10,
+        backgroundColor: '#00c853',
+        borderRadius: 12,
+        padding: 4,
+    },
+    emptyStateTitle: {
+        fontSize: 22,
+        fontWeight: '700',
+        color: '#e0eee6',
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+    emptyStateDescription: {
+        fontSize: 16,
+        color: '#7b8a9e',
+        textAlign: 'center',
+        lineHeight: 24,
+        marginBottom: 32,
+    },
+    scheduleButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 14,
+        paddingHorizontal: 32,
+        borderRadius: 12,
+        marginBottom: 16,
+    },
+    scheduleButtonText: {
+        color: '#0b1120',
+        fontSize: 16,
+        fontWeight: '700',
+    },
+    emptyStateFooter: {
+        fontSize: 13,
+        color: '#3e5068',
+    },
+    orderCard: {
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(0,200,83,0.16)',
+    },
+    orderHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    orderId: {
+        color: '#7b8a9e',
+        fontSize: 14,
+    },
+    orderStatus: {
+        color: '#00c853',
+        fontWeight: '600',
+        fontSize: 14,
+    },
+    orderType: {
+        color: '#e0eee6',
+        fontSize: 18,
+        fontWeight: '700',
+        marginBottom: 12,
+    },
+    orderFooter: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    orderDate: {
+        color: '#7b8a9e',
+        fontSize: 14,
+    },
+    placeholderContainer: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    placeholderText: {
+        color: '#3e5068',
+        fontSize: 18,
+    },
+    inputLabel: {
+        fontSize: 16,
+        color: '#d0d8e4',
+        marginBottom: 10,
+        fontWeight: '600',
+    },
+    inputCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#0f1a26',
+        borderWidth: 1,
+        borderColor: '#263345',
+        borderRadius: 12,
+        padding: 16,
+        gap: 16,
+    },
+    inputCardError: {
+        borderColor: '#ff4d4f',
+        backgroundColor: '#1a0f0f',
+    },
+    inputText: {
+        color: '#e0eee6',
+        fontSize: 16,
+        fontWeight: '500',
+    },
+    errorText: {
+        color: '#ff4d4f',
+    },
+    errorLabel: {
+        fontSize: 12,
+        color: '#ff4d4f',
+        marginTop: 6,
+        marginLeft: 4,
+    },
+    confirmButton: {
+        paddingVertical: 16,
+        borderRadius: 12,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#1e4a32',
+    },
+    confirmButtonDisabled: {
+        borderColor: '#1e4a32',
+    },
+    confirmButtonText: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#FFFFFF',
+    },
+    confirmButtonTextDisabled: {
+        color: '#8ba696',
+    },
+    timeRowsContainer: {
+        gap: 0, // Using margins on labels instead for spacing
+    },
+    timeRow: {
+        //marginBottom: 0,
+    },
+});
