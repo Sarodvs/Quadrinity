@@ -1,40 +1,39 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    SafeAreaView,
-    StatusBar,
-    TextInput,
     Image,
     Keyboard,
+    SafeAreaView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
     TouchableWithoutFeedback,
+    View,
 } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 
 export default function ForgotPasswordScreen() {
     const router = useRouter();
-    const [mobileNumber, setMobileNumber] = useState('');
+    const [email, setEmail] = useState('');
 
     const handleTextChange = (text: string) => {
-        const numericText = text.replace(/[^0-9]/g, '');
-        if (numericText.length <= 10) {
-            setMobileNumber(numericText);
-        }
+        setEmail(text.trim());
     };
 
     const handleGetOtp = () => {
-        if (mobileNumber.length === 10) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (emailRegex.test(email)) {
             // Navigate to official OTP verification
             // Could pass a params to indication password reset mode if needed
             router.push('/official-verify-otp');
         }
     };
 
-    const isInputValid = mobileNumber.length === 10;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const isInputValid = emailRegex.test(email);
 
     return (
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -83,20 +82,20 @@ export default function ForgotPasswordScreen() {
 
                         <Text style={styles.title}>Forgot Password?</Text>
                         <Text style={styles.subtitle}>
-                            Enter your registered mobile number to receive an OTP for password reset.
+                            Enter your registered email address to receive an OTP for password reset.
                         </Text>
 
                         {/* Input */}
                         <View style={styles.inputGroup}>
-                            <Text style={styles.label}>Mobile No.</Text>
+                            <Text style={styles.label}>Email Address</Text>
                             <TextInput
                                 style={styles.input}
-                                placeholder="Enter mobile number"
+                                placeholder="Enter email address"
                                 placeholderTextColor="#7A8A99"
-                                value={mobileNumber}
+                                value={email}
                                 onChangeText={handleTextChange}
-                                keyboardType="phone-pad"
-                                maxLength={10}
+                                keyboardType="email-address"
+                                autoCapitalize="none"
                             />
                         </View>
 

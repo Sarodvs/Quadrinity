@@ -1,26 +1,26 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-    View,
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Image,
+    Keyboard,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
-    ScrollView,
-    StyleSheet,
-    Image,
-    StatusBar,
-    Dimensions,
-    Modal,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
     TouchableWithoutFeedback,
-    Keyboard,
-    ActivityIndicator,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import authService from './services/authService';
 
 
@@ -28,7 +28,8 @@ const { height } = Dimensions.get('window');
 
 export default function LoginScreen() {
     const [activeTab, setActiveTab] = useState<'resident' | 'official'>('resident');
-    const [mobileNumber, setMobileNumber] = useState('');
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
     // Official Login State
@@ -40,7 +41,9 @@ export default function LoginScreen() {
     const [registerStep, setRegisterStep] = useState<'details' | 'otp'>('details');
     const [registerForm, setRegisterForm] = useState({
         name: '',
-        mobile: '',
+        email: '',
+        password: '',
+        confirmPassword: '',
         houseNo: '',
         address: '',
     });
@@ -48,7 +51,9 @@ export default function LoginScreen() {
     const [registerVerificationId, setRegisterVerificationId] = useState('');
     const [registerErrors, setRegisterErrors] = useState({
         name: '',
-        mobile: '',
+        email: '',
+        password: '',
+        confirmPassword: '',
         houseNo: '',
         address: '',
     });
@@ -59,18 +64,16 @@ export default function LoginScreen() {
     // Login Logic
     const handleLogin = async () => {
         if (activeTab === 'resident') {
-            if (mobileNumber.length === 10) {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (emailRegex.test(email) && password.length > 0) {
                 setIsLoading(true);
                 try {
-                    const result = await authService.sendOTP(mobileNumber);
+                    const result = await authService.loginWithEmailAndPassword(email, password);
 
-                    if (result.success && result.verificationId) {
-                        router.push({
-                            pathname: '/verify-otp',
-                            params: { verificationId: result.verificationId, mobileNumber },
-                        });
+                    if (result.success) {
+                        router.replace('/home');
                     } else {
-                        Alert.alert('Error', result.error || 'Failed to send OTP');
+                        Alert.alert('Error', result.error || 'Failed to login');
                     }
                 } catch (error: any) {
                     const errorMsg = error.message || 'An unexpected error occurred';
@@ -105,13 +108,11 @@ export default function LoginScreen() {
     };
 
     const handleTextChange = (text: string) => {
-        const numericText = text.replace(/[^0-9]/g, '');
-        if (numericText.length <= 10) {
-            setMobileNumber(numericText);
-        }
+        setEmail(text.trim());
     };
 
-    const isResidentValid = mobileNumber.length === 10;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const isResidentValid = emailRegex.test(email) && password.length > 0;
     const isOfficialValid = officialUserId.length > 0;
     const isInputValid = activeTab === 'resident' ? isResidentValid : isOfficialValid;
 
@@ -119,9 +120,9 @@ export default function LoginScreen() {
     const openRegisterModal = () => {
         setRegisterModalVisible(true);
         setRegisterStep('details');
-        setRegisterForm({ name: '', mobile: '', houseNo: '', address: '' });
+        setRegisterForm({ name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' });
         setRegisterOtp('');
-        setRegisterErrors({ name: '', mobile: '', houseNo: '', address: '' });
+        setRegisterErrors({ name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' });
     };
 
     const closeRegisterModal = () => {
@@ -136,14 +137,23 @@ export default function LoginScreen() {
 
     const validateRegisterForm = () => {
         let isValid = true;
-        const errors = { name: '', mobile: '', houseNo: '', address: '' };
+        const errors = { name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' };
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
         if (!registerForm.name.trim()) {
             errors.name = 'Name is required';
             isValid = false;
         }
-        if (!registerForm.mobile.trim() || registerForm.mobile.length !== 10) {
-            errors.mobile = 'Valid 10-digit mobile is required';
+        if (!registerForm.email.trim() || !emailRegex.test(registerForm.email)) {
+            errors.email = 'Valid email is required';
+            isValid = false;
+        }
+        if (registerForm.password.length < 6) {
+            errors.password = 'Password must be at least 6 characters';
+            isValid = false;
+        }
+        if (registerForm.password !== registerForm.confirmPassword) {
+            errors.confirmPassword = 'Passwords do not match';
             isValid = false;
         }
         if (!registerForm.houseNo.trim()) {
@@ -163,14 +173,22 @@ export default function LoginScreen() {
         if (validateRegisterForm()) {
             setRegisterIsLoading(true);
             try {
-                const result = await authService.sendOTP(registerForm.mobile);
+                const result = await authService.registerWithEmailAndPassword(registerForm);
 
-                if (result.success && result.verificationId) {
-                    setRegisterVerificationId(result.verificationId);
-                    setRegisterStep('otp');
-                    setRegisterOtp('');
+                if (result.success) {
+                    Alert.alert('Success', 'Registered Successfully!', [
+                        {
+                            text: 'OK',
+                            onPress: () => {
+                                closeRegisterModal();
+                                setEmail(registerForm.email);
+                                setPassword(registerForm.password);
+                                // Optional: automatically log them in or navigate to home 
+                            },
+                        },
+                    ]);
                 } else {
-                    Alert.alert('Error', result.error || 'Failed to send OTP');
+                    Alert.alert('Error', result.error || 'Failed to register');
                 }
             } catch (error: any) {
                 Alert.alert('Error', error.message || 'An unexpected error occurred');
@@ -195,7 +213,7 @@ export default function LoginScreen() {
                             text: 'OK',
                             onPress: () => {
                                 closeRegisterModal();
-                                setMobileNumber(registerForm.mobile);
+                                setEmail(registerForm.email);
                             },
                         },
                     ]);
@@ -215,7 +233,7 @@ export default function LoginScreen() {
     return (
         <SafeAreaView style={styles.safeArea}>
             <StatusBar barStyle="light-content" />
-            
+
             <View style={styles.mainContainer}>
                 <ScrollView
                     contentContainerStyle={styles.scrollContainer}
@@ -286,15 +304,27 @@ export default function LoginScreen() {
                         {activeTab === 'resident' ? (
                             <View>
                                 <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Mobile No.</Text>
+                                    <Text style={styles.label}>Email Address</Text>
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="Enter mobile number"
+                                        placeholder="Enter email address"
                                         placeholderTextColor="#7A8A99"
-                                        value={mobileNumber}
+                                        value={email}
                                         onChangeText={handleTextChange}
-                                        keyboardType="phone-pad"
-                                        maxLength={10}
+                                        keyboardType="email-address"
+                                        autoCapitalize="none"
+                                    />
+                                </View>
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.label}>Password</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Enter password"
+                                        placeholderTextColor="#7A8A99"
+                                        value={password}
+                                        onChangeText={setPassword}
+                                        secureTextEntry
+                                        autoCapitalize="none"
                                     />
                                 </View>
                                 {/* Register Now Link */}
@@ -336,7 +366,7 @@ export default function LoginScreen() {
                                     <ActivityIndicator size="small" color="#FFFFFF" />
                                 ) : (
                                     <Text style={[styles.actionButtonText, !isInputValid && styles.actionButtonTextDisabled]}>
-                                        {activeTab === 'resident' ? 'Get OTP' : 'Get OTP'}
+                                        {activeTab === 'resident' ? 'Login' : 'Get OTP'}
                                     </Text>
                                 )}
                             </LinearGradient>
@@ -346,7 +376,7 @@ export default function LoginScreen() {
                         <View style={styles.infoBox}>
                             <MaterialCommunityIcons name="file-document-outline" size={18} color="#3d7a56" style={styles.infoIcon} />
                             <Text style={styles.infoText}>
-                                {activeTab === 'resident' ? 'An OTP will be sent to your registered mobile number' : 'An OTP will be sent to your registered contact'}
+                                {activeTab === 'resident' ? 'Please log in with your email and password' : 'An OTP will be sent to your registered contact'}
                             </Text>
                         </View>
 
@@ -398,17 +428,43 @@ export default function LoginScreen() {
                                         </View>
 
                                         <View style={styles.modalInputGroup}>
-                                            <Text style={styles.modalLabel}>Mobile Number <Text style={{ color: 'red' }}>*</Text></Text>
+                                            <Text style={styles.modalLabel}>Email Address <Text style={{ color: 'red' }}>*</Text></Text>
                                             <TextInput
                                                 style={styles.modalInput}
-                                                placeholder="Enter 10-digit number"
+                                                placeholder="Enter Email Address"
                                                 placeholderTextColor="#7A8A99"
-                                                value={registerForm.mobile}
-                                                onChangeText={(text) => handleRegisterFormChange('mobile', text.replace(/[^0-9]/g, '').slice(0, 10))}
-                                                keyboardType="phone-pad"
-                                                maxLength={10}
+                                                value={registerForm.email}
+                                                onChangeText={(text) => handleRegisterFormChange('email', text.trim())}
+                                                keyboardType="email-address"
+                                                autoCapitalize="none"
                                             />
-                                            {registerErrors.mobile ? <Text style={styles.errorText}>{registerErrors.mobile}</Text> : null}
+                                            {registerErrors.email ? <Text style={styles.errorText}>{registerErrors.email}</Text> : null}
+                                        </View>
+
+                                        <View style={styles.modalInputGroup}>
+                                            <Text style={styles.modalLabel}>Password <Text style={{ color: 'red' }}>*</Text></Text>
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Enter Password"
+                                                placeholderTextColor="#7A8A99"
+                                                value={registerForm.password}
+                                                onChangeText={(text) => handleRegisterFormChange('password', text)}
+                                                secureTextEntry
+                                            />
+                                            {registerErrors.password ? <Text style={styles.errorText}>{registerErrors.password}</Text> : null}
+                                        </View>
+
+                                        <View style={styles.modalInputGroup}>
+                                            <Text style={styles.modalLabel}>Confirm Password <Text style={{ color: 'red' }}>*</Text></Text>
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Confirm Password"
+                                                placeholderTextColor="#7A8A99"
+                                                value={registerForm.confirmPassword}
+                                                onChangeText={(text) => handleRegisterFormChange('confirmPassword', text)}
+                                                secureTextEntry
+                                            />
+                                            {registerErrors.confirmPassword ? <Text style={styles.errorText}>{registerErrors.confirmPassword}</Text> : null}
                                         </View>
 
                                         <View style={styles.modalInputGroup}>
@@ -436,19 +492,23 @@ export default function LoginScreen() {
                                             {registerErrors.address ? <Text style={styles.errorText}>{registerErrors.address}</Text> : null}
                                         </View>
 
-                                        <TouchableOpacity onPress={handleSubmitDetails} activeOpacity={0.8}>
+                                        <TouchableOpacity onPress={handleSubmitDetails} activeOpacity={0.8} disabled={registerIsLoading}>
                                             <LinearGradient
-                                                colors={['#00c853', '#1b8a2a']}
+                                                colors={registerIsLoading ? ['#16362a', '#0e2419'] : ['#00c853', '#1b8a2a']}
                                                 style={styles.modalButton}
                                             >
-                                                <Text style={styles.modalButtonText}>Submit</Text>
+                                                {registerIsLoading ? (
+                                                    <ActivityIndicator size="small" color="#FFFFFF" />
+                                                ) : (
+                                                    <Text style={styles.modalButtonText}>Register</Text>
+                                                )}
                                             </LinearGradient>
                                         </TouchableOpacity>
                                     </View>
                                 ) : (
                                     <View style={styles.modalBody}>
                                         <Text style={styles.otpInstruction}>
-                                            Please enter the OTP sent to {registerForm.mobile}
+                                            Please enter the OTP sent to {registerForm.email}
                                         </Text>
 
                                         <View style={styles.modalInputGroup}>
