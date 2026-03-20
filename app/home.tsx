@@ -1,5 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { doc, getDoc } from 'firebase/firestore';
 import React, { useState } from 'react';
 import {
     Alert,
@@ -10,10 +12,14 @@ import {
     ScrollView,
     StatusBar,
     StyleSheet,
+    Switch,
     Text,
     TouchableOpacity,
     View
 } from 'react-native';
+import { ThemeContext } from './context/ThemeContext';
+import { auth, db } from './firebaseConfig';
+import authService from './services/authService';
 
 const { width } = Dimensions.get('window');
 
@@ -34,6 +40,7 @@ interface Order {
 }
 
 export default function HomeScreen() {
+    const { colors, isDark } = React.useContext(ThemeContext);
     const [activeTab, setActiveTab] = useState('home');
     const [orders, setOrders] = useState<Order[]>([]);
 
@@ -85,9 +92,9 @@ export default function HomeScreen() {
     };
 
     return (
-        <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="light-content" />
-            <View style={styles.container}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+            <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
 
                 {activeTab === 'home' && !isBooking && (
                     <HomeContent onBookAppointment={handleStartBooking} />
@@ -115,7 +122,7 @@ export default function HomeScreen() {
                 {activeTab === 'profile' && <ProfileContent />}
 
                 {/* Bottom Navigation */}
-                <View style={styles.bottomNav}>
+                <View style={[styles.bottomNav, { backgroundColor: colors.navBg, borderTopColor: colors.navBorder }]}>
                     {NAV_ITEMS.map((item) => {
                         const isActive = activeTab === item.id;
                         return (
@@ -126,16 +133,16 @@ export default function HomeScreen() {
                             >
                                 <View style={[styles.navIconContainer, isActive && styles.navIconActive]}>
                                     <LinearGradient
-                                        colors={isActive ? ['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.08)'] : ['transparent', 'transparent']}
+                                        colors={isActive ? [colors.navIconActiveBgGradStart, colors.navIconActiveBgGradEnd] : ['transparent', 'transparent']}
                                         style={StyleSheet.absoluteFillObject}
                                     />
                                     <MaterialCommunityIcons
                                         name={isActive ? (item.iconActive as any) : (item.icon as any)}
                                         size={24}
-                                        color={isActive ? '#00c853' : '#3e5068'}
+                                        color={isActive ? colors.primary : colors.navIcon}
                                     />
                                 </View>
-                                <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>
+                                <Text style={[styles.navLabel, isActive && styles.navLabelActive, !isActive && { color: colors.navIcon }]}>
                                     {item.label}
                                 </Text>
                             </TouchableOpacity>
@@ -150,11 +157,26 @@ export default function HomeScreen() {
 // --- Sub Components ---
 
 const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) => {
+    const { isDark, colors } = React.useContext(ThemeContext);
     const handleUPIPayment = async () => {
-        // Example UPI URI structure
-        const upiUri = 'upi://pay?pa=haritham@upi&pn=Haritham&am=1.00&cu=INR';
-
         try {
+            const docRef = doc(db, 'system', 'payment_settings');
+            const docSnap = await getDoc(docRef);
+
+            if (!docSnap.exists() || !docSnap.data().official_upi_id) {
+                Alert.alert("Notice", "The official has not set up their receiving UPI details yet.");
+                return;
+            }
+
+            const data = docSnap.data();
+            const officialUpi = data.official_upi_id;
+            const officialName = data.official_bank_name;
+
+            const payeeName = officialName ? encodeURIComponent(officialName) : encodeURIComponent('Haritham Official Collection');
+
+            // Example UPI URI structure using the dynamically fetched ID
+            const upiUri = `upi://pay?pa=${officialUpi}&pn=${payeeName}&am=1.00&cu=INR`;
+
             const supported = await Linking.canOpenURL(upiUri);
             if (supported) {
                 await Linking.openURL(upiUri);
@@ -162,7 +184,8 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                 Alert.alert("Error", "No UPI app found on this device.");
             }
         } catch (error) {
-            Alert.alert("Error", "Failed to open UPI app.");
+            Alert.alert("Error", "Failed to construct or open UPI app intent.");
+            console.error("UPI Error: ", error);
         }
     };
 
@@ -173,7 +196,7 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
         >
             {/* Header */}
             <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120']}
+                colors={isDark ? ['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120'] : [colors.headerGrad1, colors.headerGrad2, colors.headerGrad3, colors.headerGrad4]}
                 locations={[0, 0.4, 0.7, 1]}
                 style={styles.header}
             >
@@ -184,8 +207,8 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                         resizeMode="contain"
                     />
                     <View style={styles.taglineContainer}>
-                        <Text style={styles.taglineStart}>Your Waste</Text>
-                        <Text style={styles.taglineEnd}>Our Responsibility</Text>
+                        <Text style={[styles.taglineStart, { color: isDark ? '#ffffff' : colors.text }]}>Your Waste</Text>
+                        <Text style={[styles.taglineEnd, { color: isDark ? '#ffffff' : colors.text }]}>Our Responsibility</Text>
                     </View>
                 </View>
 
@@ -200,7 +223,7 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
             {/* Content Section */}
             <View style={styles.contentSection}>
                 {/* Book Appointment Card */}
-                <Text style={styles.sectionTitle}>Book Your Appointment</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Book Your Appointment</Text>
                 <TouchableOpacity activeOpacity={0.9} onPress={onBookAppointment}>
                     <LinearGradient
                         colors={['#0f2d1a', '#0c1e14', '#0b1518']}
@@ -225,8 +248,8 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                 </TouchableOpacity>
 
                 {/* Collection Points Card */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Collection Points Near Me</Text>
-                <TouchableOpacity activeOpacity={0.9}>
+                <Text style={[styles.sectionTitle, { marginTop: 32, color: colors.textSecondary }]}>Collection Points Near Me</Text>
+                <TouchableOpacity activeOpacity={0.9} onPress={() => Alert.alert('Coming Soon', 'Collection points feature is under development.')}>
                     <LinearGradient
                         colors={['#0f2d1a', '#0c1e14', '#0b1518']}
                         start={{ x: 0, y: 0 }}
@@ -250,13 +273,13 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                 </TouchableOpacity>
 
                 {/* Your Contribution Section */}
-                <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 20 }]}>Your Contribution</Text>
+                <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 20, color: colors.textSecondary }]}>Your Contribution</Text>
                 <View style={styles.contributionContainer}>
                     {/* Circular Progress Mock */}
                     <View style={styles.circularProgress}>
                         <View style={styles.innerCircle}>
-                            <Text style={styles.contributionValue}>0.00</Text>
-                            <Text style={styles.contributionUnit}>kg</Text>
+                            <Text style={[styles.contributionValue, { color: colors.text }]}>0.00</Text>
+                            <Text style={[styles.contributionUnit, { color: colors.textSecondary }]}>kg</Text>
                         </View>
                         {/* Ring borders */}
                         <View style={styles.ringBackground} />
@@ -265,12 +288,12 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
 
                     <View style={styles.wasteTypeTag}>
                         <MaterialCommunityIcons name="leaf" size={14} color="#00c853" />
-                        <Text style={styles.wasteTypeText}>Scrap Waste</Text>
+                        <Text style={[styles.wasteTypeText, { color: colors.textSecondary }]}>Scrap Waste</Text>
                     </View>
                 </View>
 
                 {/* Payments Section */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Payments & Bills</Text>
+                <Text style={[styles.sectionTitle, { marginTop: 32, color: colors.textSecondary }]}>Payments & Bills</Text>
                 <TouchableOpacity activeOpacity={0.9} onPress={handleUPIPayment}>
                     <LinearGradient
                         colors={['#0f2d1a', '#0c1e14', '#0b1518']}
@@ -318,31 +341,32 @@ const BookingContent = ({
     onConfirm: () => void,
     onCancel: () => void
 }) => {
+    const { isDark, colors } = React.useContext(ThemeContext);
     const isConfirmEnabled = selectedDate && startTime && endTime;
 
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header */}
             <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                colors={isDark ? ['#0a3f18', '#0d2f16', '#0b1a12'] : [colors.headerGrad1, colors.headerGrad2, colors.headerGrad3]}
                 locations={[0, 0.5, 1]}
                 style={[styles.header, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
             >
-                <Text style={styles.profileName}>Schedule Pickup</Text>
-                <Text style={styles.profileEmail}>Select a convenient time for collection</Text>
+                <Text style={[styles.profileName, { color: isDark ? '#ffffff' : colors.text }]}>Schedule Pickup</Text>
+                <Text style={[styles.profileEmail, { color: isDark ? '#a0aec0' : colors.textSecondary }]}>Select a convenient time for collection</Text>
             </LinearGradient>
 
             <View style={styles.contentSection}>
                 {/* Date Selection */}
-                <Text style={styles.inputLabel}>Select Date</Text>
-                <View style={styles.card}>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Select Date</Text>
+                <View style={[styles.card, { borderColor: colors.cardBorder, backgroundColor: isDark ? '#0f1a26' : colors.cardBg }]}>
                     <View style={[styles.iconBox, { width: 48, height: 48 }]}>
                         <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
                             <MaterialCommunityIcons name="calendar-month" size={24} color="#00c853" />
                         </LinearGradient>
                     </View>
                     <View style={styles.cardContent}>
-                        <Text style={selectedDate ? styles.inputText : styles.placeholderText}>
+                        <Text style={selectedDate ? [styles.inputText, { color: colors.text }] : styles.placeholderText}>
                             {selectedDate ? selectedDate.toLocaleDateString() : 'Choose a date'}
                         </Text>
                     </View>
@@ -352,20 +376,20 @@ const BookingContent = ({
                 </View>
 
                 {/* Time Selection */}
-                <Text style={[styles.inputLabel, { marginTop: 24 }]}>Select Time Window</Text>
+                <Text style={[styles.inputLabel, { marginTop: 24, color: colors.textSecondary }]}>Select Time Window</Text>
 
                 <View style={styles.timeRowsContainer}>
                     {/* Start Time */}
                     <View style={styles.timeRow}>
-                        <Text style={[styles.inputLabel, { fontSize: 13, color: '#7b8a9e', marginBottom: 8, marginTop: 8 }]}>From Time</Text>
-                        <View style={styles.card}>
+                        <Text style={[styles.inputLabel, { fontSize: 13, color: colors.textMuted, marginBottom: 8, marginTop: 8 }]}>From Time</Text>
+                        <View style={[styles.card, { borderColor: colors.cardBorder, backgroundColor: isDark ? '#0f1a26' : colors.cardBg }]}>
                             <View style={[styles.iconBox, { width: 48, height: 48 }]}>
                                 <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
                                     <MaterialCommunityIcons name="clock-start" size={24} color="#00c853" />
                                 </LinearGradient>
                             </View>
                             <View style={styles.cardContent}>
-                                <Text style={startTime ? styles.inputText : styles.placeholderText}>
+                                <Text style={startTime ? [styles.inputText, { color: colors.text }] : styles.placeholderText}>
                                     {startTime ? startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Start Time'}
                                 </Text>
                             </View>
@@ -377,15 +401,15 @@ const BookingContent = ({
 
                     {/* End Time */}
                     <View style={styles.timeRow}>
-                        <Text style={[styles.inputLabel, { fontSize: 13, color: '#7b8a9e', marginBottom: 8, marginTop: 16 }]}>To Time</Text>
-                        <View style={styles.card}>
+                        <Text style={[styles.inputLabel, { fontSize: 13, color: colors.textMuted, marginBottom: 8, marginTop: 16 }]}>To Time</Text>
+                        <View style={[styles.card, { borderColor: colors.cardBorder, backgroundColor: isDark ? '#0f1a26' : colors.cardBg }]}>
                             <View style={[styles.iconBox, { width: 48, height: 48 }]}>
                                 <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
                                     <MaterialCommunityIcons name="clock-end" size={24} color="#00c853" />
                                 </LinearGradient>
                             </View>
                             <View style={styles.cardContent}>
-                                <Text style={endTime ? styles.inputText : styles.placeholderText}>
+                                <Text style={endTime ? [styles.inputText, { color: colors.text }] : styles.placeholderText}>
                                     {endTime ? endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'End Time'}
                                 </Text>
                             </View>
@@ -436,6 +460,7 @@ const BookingContent = ({
 
 
 const OrdersContent = ({ orders, onSchedulePickup }: { orders: Order[], onSchedulePickup: () => void }) => {
+    const { isDark, colors } = React.useContext(ThemeContext);
     if (orders.length === 0) {
         return (
             <View style={styles.emptyStateContainer}>
@@ -448,8 +473,8 @@ const OrdersContent = ({ orders, onSchedulePickup }: { orders: Order[], onSchedu
                     </View>
                 </View>
 
-                <Text style={styles.emptyStateTitle}>No Orders Yet</Text>
-                <Text style={styles.emptyStateDescription}>
+                <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No Orders Yet</Text>
+                <Text style={[styles.emptyStateDescription, { color: colors.textSecondary }]}>
                     You don't have any waste collection orders at the moment. Schedule a pickup to get started.
                 </Text>
 
@@ -472,20 +497,20 @@ const OrdersContent = ({ orders, onSchedulePickup }: { orders: Order[], onSchedu
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <View style={[styles.contentSection, { paddingTop: 40 }]}>
-                <Text style={styles.sectionTitle}>Your Orders ({orders.length})</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Your Orders ({orders.length})</Text>
                 {orders.map((order) => (
                     <LinearGradient
                         key={order.id}
-                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                        colors={isDark ? ['#0f2d1a', '#0c1e14', '#0b1518'] : [colors.cardBg, colors.cardBg, colors.cardBg]}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
-                        style={styles.orderCard}
+                        style={[styles.orderCard, { borderColor: colors.cardBorder }]}
                     >
                         <View style={styles.orderHeader}>
                             <Text style={styles.orderId}>Order #{order.id}</Text>
                             <Text style={styles.orderStatus}>{order.status}</Text>
                         </View>
-                        <Text style={styles.orderType}>{order.type}</Text>
+                        <Text style={[styles.orderType, { color: colors.text }]}>{order.type}</Text>
                         <View style={styles.orderFooter}>
                             <MaterialCommunityIcons name="calendar" size={14} color="#7b8a9e" />
                             <Text style={styles.orderDate}>{order.date}</Text>
@@ -551,16 +576,17 @@ const MOCK_HISTORY_DATA = [
 ];
 
 const HistoryContent = () => {
+    const { isDark, colors } = React.useContext(ThemeContext);
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header / Summary Area */}
             <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                colors={isDark ? ['#0a3f18', '#0d2f16', '#0b1a12'] : [colors.headerGrad1, colors.headerGrad2, colors.headerGrad3]}
                 locations={[0, 0.5, 1]}
                 style={[styles.header, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
             >
-                <Text style={styles.profileName}>Collection History</Text>
-                <Text style={styles.profileEmail}>Your past waste management activities</Text>
+                <Text style={[styles.profileName, { color: isDark ? '#ffffff' : colors.text }]}>Collection History</Text>
+                <Text style={[styles.profileEmail, { color: isDark ? '#a0aec0' : colors.textSecondary }]}>Your past waste management activities</Text>
 
                 <View style={[styles.statsContainer, { marginTop: 20, backgroundColor: 'transparent', borderWidth: 0, padding: 0, shadowOpacity: 0 }]}>
                     <View style={styles.statBox}>
@@ -576,13 +602,13 @@ const HistoryContent = () => {
             </LinearGradient>
 
             <View style={styles.contentSection}>
-                <Text style={styles.sectionTitle}>Recent Orders</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Recent Orders</Text>
 
                 {MOCK_HISTORY_DATA.length === 0 ? (
                     <View style={styles.emptyStateContainer}>
-                        <MaterialCommunityIcons name="history" size={80} color="#263345" style={{ marginBottom: 16 }} />
-                        <Text style={styles.emptyStateTitle}>No History found</Text>
-                        <Text style={styles.emptyStateDescription}>You don't have any past orders yet.</Text>
+                        <MaterialCommunityIcons name="history" size={80} color={colors.navIcon} style={{ marginBottom: 16 }} />
+                        <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No History found</Text>
+                        <Text style={[styles.emptyStateDescription, { color: colors.textSecondary }]}>You don't have any past orders yet.</Text>
                     </View>
                 ) : (
                     MOCK_HISTORY_DATA.map((item) => (
@@ -628,11 +654,42 @@ const HistoryContent = () => {
 };
 
 const ProfileContent = () => {
+    const { isDark, toggleTheme, colors } = React.useContext(ThemeContext);
+    const router = useRouter();
+    const [userProfile, setUserProfile] = useState<any>(null);
+
+    React.useEffect(() => {
+        const fetchUserData = async () => {
+            const userEmail = auth.currentUser?.email;
+            if (userEmail) {
+                try {
+                    const docRef = doc(db, 'users', userEmail.toLowerCase());
+                    const docSnap = await getDoc(docRef);
+                    if (docSnap.exists()) {
+                        setUserProfile(docSnap.data());
+                    }
+                } catch (error) {
+                    console.error("Error fetching user profile:", error);
+                }
+            }
+        };
+        fetchUserData();
+    }, []);
+
+    const handleLogout = async () => {
+        try {
+            await authService.logout();
+            router.replace('/login');
+        } catch (error) {
+            Alert.alert("Error", "Failed to logout.");
+        }
+    };
+
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header Area */}
             <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                colors={isDark ? ['#0a3f18', '#0d2f16', '#0b1a12'] : [colors.headerGrad1, colors.headerGrad2, colors.headerGrad3]}
                 locations={[0, 0.5, 1]}
                 style={[styles.header, { paddingBottom: 30, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
             >
@@ -644,17 +701,17 @@ const ProfileContent = () => {
                         <MaterialCommunityIcons name="check-decagram" size={20} color="#00c853" />
                     </View>
                 </View>
-                <Text style={styles.profileName}>John Doe</Text>
-                <Text style={styles.profileEmail}>john.doe@example.com</Text>
+                <Text style={[styles.profileName, { color: isDark ? '#ffffff' : colors.text }]}>{userProfile?.name || 'Loading...'}</Text>
+                <Text style={[styles.profileEmail, { color: isDark ? '#a0aec0' : colors.textSecondary }]}>{userProfile?.email || ''}</Text>
 
                 <View style={styles.profileRoleTag}>
-                    <Text style={styles.profileRoleText}>Resident</Text>
+                    <Text style={styles.profileRoleText}>{userProfile?.role ? userProfile.role.charAt(0).toUpperCase() + userProfile.role.slice(1) : 'Resident'}</Text>
                 </View>
             </LinearGradient>
 
             <View style={styles.contentSection}>
                 {/* Stats Section */}
-                <Text style={styles.sectionTitle}>Your Impact</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Your Impact</Text>
                 <View style={styles.statsContainer}>
                     <View style={styles.statBox}>
                         <Text style={styles.statValue}>45</Text>
@@ -673,15 +730,15 @@ const ProfileContent = () => {
                 </View>
 
                 {/* Contact & Location */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Personal Details</Text>
-                <View style={styles.detailsCard}>
+                <Text style={[styles.sectionTitle, { marginTop: 32, color: colors.textSecondary }]}>Personal Details</Text>
+                <View style={[styles.detailsCard, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
                     <View style={styles.detailRow}>
                         <View style={styles.detailIconBox}>
                             <MaterialCommunityIcons name="home-outline" size={20} color="#00c853" />
                         </View>
                         <View style={styles.detailTextContainer}>
                             <Text style={styles.detailLabel}>House / Flat No.</Text>
-                            <Text style={styles.detailValue}>Apt 402, Green Valley</Text>
+                            <Text style={[styles.detailValue, { color: colors.text }]}>{userProfile?.houseNo || 'Not Provided'}</Text>
                         </View>
                     </View>
                     <View style={styles.detailDivider} />
@@ -691,7 +748,7 @@ const ProfileContent = () => {
                         </View>
                         <View style={styles.detailTextContainer}>
                             <Text style={styles.detailLabel}>Address</Text>
-                            <Text style={styles.detailValue}>123 Eco Street, Trivandrum, Kerala 695001</Text>
+                            <Text style={[styles.detailValue, { color: colors.text }]}>{userProfile?.address || 'Not Provided'}</Text>
                         </View>
                     </View>
                     <View style={styles.detailDivider} />
@@ -701,38 +758,50 @@ const ProfileContent = () => {
                         </View>
                         <View style={styles.detailTextContainer}>
                             <Text style={styles.detailLabel}>Phone Number</Text>
-                            <Text style={styles.detailValue}>+91 98765 43210</Text>
+                            <Text style={[styles.detailValue, { color: colors.text }]}>{userProfile?.phone || 'Not Provided'}</Text>
                         </View>
                     </View>
                 </View>
 
                 {/* Actions Menu */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Settings</Text>
+                <Text style={[styles.sectionTitle, { marginTop: 32, color: colors.textSecondary }]}>Settings</Text>
                 <View style={styles.menuContainer}>
-                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                    <TouchableOpacity style={[styles.menuItem, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]} activeOpacity={0.7} onPress={() => Alert.alert('Coming Soon', 'Edit Profile is under development.')}>
                         <MaterialCommunityIcons name="account-edit-outline" size={24} color="#7b8a9e" />
-                        <Text style={styles.menuItemText}>Edit Profile</Text>
+                        <Text style={[styles.menuItemText, { color: colors.text }]}>Edit Profile</Text>
                         <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                    <TouchableOpacity style={[styles.menuItem, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]} activeOpacity={0.7} onPress={() => Alert.alert('Coming Soon', 'Change Password is under development.')}>
                         <MaterialCommunityIcons name="lock-outline" size={24} color="#7b8a9e" />
-                        <Text style={styles.menuItemText}>Change Password</Text>
+                        <Text style={[styles.menuItemText, { color: colors.text }]}>Change Password</Text>
                         <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                    <TouchableOpacity style={[styles.menuItem, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]} activeOpacity={0.7} onPress={() => Alert.alert('Coming Soon', 'Help & Support is under development.')}>
                         <MaterialCommunityIcons name="help-circle-outline" size={24} color="#7b8a9e" />
-                        <Text style={styles.menuItemText}>Help & Support</Text>
+                        <Text style={[styles.menuItemText, { color: colors.text }]}>Help & Support</Text>
                         <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                    <TouchableOpacity style={[styles.menuItem, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]} activeOpacity={0.7} onPress={() => Alert.alert('Coming Soon', 'Terms & Privacy Policy is under development.')}>
                         <MaterialCommunityIcons name="file-document-outline" size={24} color="#7b8a9e" />
-                        <Text style={styles.menuItemText}>Terms & Privacy Policy</Text>
+                        <Text style={[styles.menuItemText, { color: colors.text }]}>Terms & Privacy Policy</Text>
                         <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
                     </TouchableOpacity>
+                    <View style={[styles.menuItem, { justifyContent: 'space-between', backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <MaterialCommunityIcons name="theme-light-dark" size={24} color="#7b8a9e" style={{ marginRight: 16 }} />
+                            <Text style={[styles.menuItemText, { marginLeft: 0, color: colors.text }]}>Dark Mode</Text>
+                        </View>
+                        <Switch
+                            value={isDark}
+                            onValueChange={toggleTheme}
+                            trackColor={{ false: '#7b8a9e', true: '#00c853' }}
+                            thumbColor={'#ffffff'}
+                        />
+                    </View>
                 </View>
 
                 {/* Logout Button */}
-                <TouchableOpacity style={styles.logoutButton} activeOpacity={0.8}>
+                <TouchableOpacity style={styles.logoutButton} activeOpacity={0.8} onPress={handleLogout}>
                     <MaterialCommunityIcons name="logout" size={20} color="#e53935" />
                     <Text style={styles.logoutButtonText}>Log Out</Text>
                 </TouchableOpacity>
@@ -776,14 +845,12 @@ const styles = StyleSheet.create({
     },
     taglineStart: {
         fontSize: 18,
-        color: '#ffffffff',
         fontWeight: '700',
         letterSpacing: 0.5,
         marginBottom: 2,
     },
     taglineEnd: {
         fontSize: 18,
-        color: '#ffffffff',
         fontWeight: '700',
         letterSpacing: 0.5,
     },
@@ -1323,9 +1390,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '500',
     },
-    placeholderText: {
-        color: '#5c6b7f',
-    },
+
     errorText: {
         color: '#ff4d4f',
     },

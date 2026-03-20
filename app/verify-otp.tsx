@@ -74,8 +74,12 @@ export default function VerifyOtpScreen() {
                 const result = await authService.verifyOTP(verificationId || '', otpCode);
 
                 if (result.success) {
-                    // Navigate directly to home on success
-                    router.replace('/home');
+                    // Navigate to appropriate dashboard based on role
+                    if (result.role === 'official') {
+                        router.replace('/official-dashboard');
+                    } else {
+                        router.replace('/home');
+                    }
                 } else {
                     setOtpError(result.error || 'Invalid OTP. Please try again.');
                 }

@@ -32,10 +32,6 @@ export default function LoginScreen() {
     const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    // Official Login State
-    const [officialUserId, setOfficialUserId] = useState('');
-    const [officialPassword, setOfficialPassword] = useState('');
-
     // Registration Modal State
     const [isRegisterModalVisible, setRegisterModalVisible] = useState(false);
     const [registerStep, setRegisterStep] = useState<'details' | 'otp'>('details');
@@ -46,6 +42,7 @@ export default function LoginScreen() {
         confirmPassword: '',
         houseNo: '',
         address: '',
+        officialId: '',
     });
     const [registerOtp, setRegisterOtp] = useState('');
     const [registerVerificationId, setRegisterVerificationId] = useState('');
@@ -56,6 +53,7 @@ export default function LoginScreen() {
         confirmPassword: '',
         houseNo: '',
         address: '',
+        officialId: '',
     });
     const [registerIsLoading, setRegisterIsLoading] = useState(false);
 
@@ -63,46 +61,26 @@ export default function LoginScreen() {
 
     // Login Logic
     const handleLogin = async () => {
-        if (activeTab === 'resident') {
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (emailRegex.test(email) && password.length > 0) {
-                setIsLoading(true);
-                try {
-                    const result = await authService.loginWithEmailAndPassword(email, password);
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (emailRegex.test(email)) {
+            setIsLoading(true);
+            try {
+                // Using new passwordless email OTP flow
+                const result = await authService.loginWithEmail(email);
 
-                    if (result.success) {
-                        router.replace('/home');
-                    } else {
-                        Alert.alert('Error', result.error || 'Failed to login');
-                    }
-                } catch (error: any) {
-                    const errorMsg = error.message || 'An unexpected error occurred';
-                    Alert.alert('Error', errorMsg);
-                } finally {
-                    setIsLoading(false);
+                if (result.success && result.needsOtp) {
+                    router.push({
+                        pathname: '/verify-otp',
+                        params: { email, verificationId: result.verificationId }
+                    });
+                } else {
+                    Alert.alert('Error', result.error || 'Failed to login');
                 }
-            }
-        } else {
-            // Official Login Logic (OTP-based)
-            if (officialUserId) {
-                setIsLoading(true);
-                try {
-                    const result = await authService.sendOTP(officialUserId);
-
-                    if (result.success && result.verificationId) {
-                        router.push({
-                            pathname: '/official-verify-otp',
-                            params: { verificationId: result.verificationId, officialId: officialUserId },
-                        });
-                    } else {
-                        Alert.alert('Error', result.error || 'Failed to send OTP');
-                    }
-                } catch (error: any) {
-                    const errorMsg = error.message || 'An unexpected error occurred';
-                    Alert.alert('Error', errorMsg);
-                } finally {
-                    setIsLoading(false);
-                }
+            } catch (error: any) {
+                const errorMsg = error.message || 'An unexpected error occurred';
+                Alert.alert('Error', errorMsg);
+            } finally {
+                setIsLoading(false);
             }
         }
     };
@@ -112,17 +90,15 @@ export default function LoginScreen() {
     };
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const isResidentValid = emailRegex.test(email) && password.length > 0;
-    const isOfficialValid = officialUserId.length > 0;
-    const isInputValid = activeTab === 'resident' ? isResidentValid : isOfficialValid;
+    const isInputValid = emailRegex.test(email);
 
     // Registration Logic
     const openRegisterModal = () => {
         setRegisterModalVisible(true);
         setRegisterStep('details');
-        setRegisterForm({ name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' });
+        setRegisterForm({ name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '', officialId: '' });
         setRegisterOtp('');
-        setRegisterErrors({ name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' });
+        setRegisterErrors({ name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '', officialId: '' });
     };
 
     const closeRegisterModal = () => {
@@ -137,15 +113,11 @@ export default function LoginScreen() {
 
     const validateRegisterForm = () => {
         let isValid = true;
-        const errors = { name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' };
+        const errors = { name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '', officialId: '' };
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
         if (!registerForm.name.trim()) {
             errors.name = 'Name is required';
-            isValid = false;
-        }
-        if (!registerForm.email.trim() || !emailRegex.test(registerForm.email)) {
-            errors.email = 'Valid email is required';
             isValid = false;
         }
         if (registerForm.password.length < 6) {
@@ -156,13 +128,21 @@ export default function LoginScreen() {
             errors.confirmPassword = 'Passwords do not match';
             isValid = false;
         }
-        if (!registerForm.houseNo.trim()) {
-            errors.houseNo = 'House Number is required';
-            isValid = false;
-        }
-        if (!registerForm.address.trim()) {
-            errors.address = 'Address is required';
-            isValid = false;
+
+        if (activeTab === 'resident') {
+            if (!registerForm.houseNo.trim()) {
+                errors.houseNo = 'House Number is required';
+                isValid = false;
+            }
+            if (!registerForm.address.trim()) {
+                errors.address = 'Address is required';
+                isValid = false;
+            }
+        } else if (activeTab === 'official') {
+            if (!registerForm.officialId.trim()) {
+                errors.officialId = 'Official Unique ID is required';
+                isValid = false;
+            }
         }
 
         setRegisterErrors(errors);
@@ -173,17 +153,18 @@ export default function LoginScreen() {
         if (validateRegisterForm()) {
             setRegisterIsLoading(true);
             try {
-                const result = await authService.registerWithEmailAndPassword(registerForm);
+                const result = await authService.registerWithEmailAndPassword({
+                    ...registerForm,
+                    role: activeTab
+                });
 
                 if (result.success) {
-                    Alert.alert('Success', 'Registered Successfully!', [
+                    Alert.alert('Success', 'Registered Successfully! Please login using your email to receive an OTP.', [
                         {
                             text: 'OK',
                             onPress: () => {
                                 closeRegisterModal();
                                 setEmail(registerForm.email);
-                                setPassword(registerForm.password);
-                                // Optional: automatically log them in or navigate to home 
                             },
                         },
                     ]);
@@ -301,56 +282,28 @@ export default function LoginScreen() {
                         </View>
 
                         {/* Inputs */}
-                        {activeTab === 'resident' ? (
-                            <View>
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Email Address</Text>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder="Enter email address"
-                                        placeholderTextColor="#7A8A99"
-                                        value={email}
-                                        onChangeText={handleTextChange}
-                                        keyboardType="email-address"
-                                        autoCapitalize="none"
-                                    />
-                                </View>
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Password</Text>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder="Enter password"
-                                        placeholderTextColor="#7A8A99"
-                                        value={password}
-                                        onChangeText={setPassword}
-                                        secureTextEntry
-                                        autoCapitalize="none"
-                                    />
-                                </View>
-                                {/* Register Now Link */}
-                                <View style={styles.registerLinkContainer}>
-                                    <Text style={styles.registerText}>Don't have an account? </Text>
-                                    <TouchableOpacity onPress={openRegisterModal}>
-                                        <Text style={styles.registerLink}>Register Now</Text>
-                                    </TouchableOpacity>
-                                </View>
+                        <View>
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Email Address</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Enter email address"
+                                    placeholderTextColor="#7A8A99"
+                                    value={email}
+                                    onChangeText={handleTextChange}
+                                    keyboardType="email-address"
+                                    autoCapitalize="none"
+                                />
                             </View>
-                        ) : (
-                            <View>
-                                <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Official ID / Phone</Text>
-                                    <TextInput
-                                        style={styles.input}
-                                        placeholder="Enter Official ID or Phone Number"
-                                        placeholderTextColor="#7A8A99"
-                                        value={officialUserId}
-                                        onChangeText={setOfficialUserId}
-                                        autoCapitalize="none"
-                                        keyboardType="phone-pad"
-                                    />
-                                </View>
+
+                            {/* Register Now Link */}
+                            <View style={styles.registerLinkContainer}>
+                                <Text style={styles.registerText}>Don't have an account? </Text>
+                                <TouchableOpacity onPress={openRegisterModal}>
+                                    <Text style={styles.registerLink}>Register Now</Text>
+                                </TouchableOpacity>
                             </View>
-                        )}
+                        </View>
 
                         {/* Action Button */}
                         <TouchableOpacity
@@ -366,7 +319,7 @@ export default function LoginScreen() {
                                     <ActivityIndicator size="small" color="#FFFFFF" />
                                 ) : (
                                     <Text style={[styles.actionButtonText, !isInputValid && styles.actionButtonTextDisabled]}>
-                                        {activeTab === 'resident' ? 'Login' : 'Get OTP'}
+                                        Login
                                     </Text>
                                 )}
                             </LinearGradient>
@@ -376,20 +329,11 @@ export default function LoginScreen() {
                         <View style={styles.infoBox}>
                             <MaterialCommunityIcons name="file-document-outline" size={18} color="#3d7a56" style={styles.infoIcon} />
                             <Text style={styles.infoText}>
-                                {activeTab === 'resident' ? 'Please log in with your email and password' : 'An OTP will be sent to your registered contact'}
+                                {activeTab === 'resident' ? 'Please log in with your email and password' : 'Log in securely as an authorized official'}
                             </Text>
                         </View>
 
                         <View style={styles.spacer} />
-
-                        {/* Footer */}
-                        <View style={styles.footer}>
-                            <Text style={styles.footerText}>
-                                By continuing, you agree to our{' '}
-                                <Text style={styles.footerLink}>Terms of Service</Text> and{' '}
-                                <Text style={styles.footerLink}>Privacy Policy</Text>
-                            </Text>
-                        </View>
                     </View>
                 </ScrollView>
 
@@ -405,9 +349,17 @@ export default function LoginScreen() {
                         style={styles.modalOverlay}
                     >
                         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-                            <View style={styles.modalContent}>
+                            <View style={{ flex: 1, width: '100%' }} />
+                        </TouchableWithoutFeedback>
+                        <View style={[styles.modalContent, { maxHeight: '85%' }]}>
+                            <ScrollView 
+                                keyboardShouldPersistTaps="handled" 
+                                showsVerticalScrollIndicator={false}
+                            >
                                 <View style={styles.modalHeader}>
-                                    <Text style={styles.modalTitle}>Register New Resident</Text>
+                                    <Text style={styles.modalTitle}>
+                                        {activeTab === 'resident' ? 'Register New Resident' : 'Register New Official'}
+                                    </Text>
                                     <TouchableOpacity onPress={closeRegisterModal}>
                                         <MaterialCommunityIcons name="close" size={24} color="#d0d8e4" />
                                     </TouchableOpacity>
@@ -467,30 +419,47 @@ export default function LoginScreen() {
                                             {registerErrors.confirmPassword ? <Text style={styles.errorText}>{registerErrors.confirmPassword}</Text> : null}
                                         </View>
 
-                                        <View style={styles.modalInputGroup}>
-                                            <Text style={styles.modalLabel}>House Number <Text style={{ color: 'red' }}>*</Text></Text>
-                                            <TextInput
-                                                style={styles.modalInput}
-                                                placeholder="Enter House No."
-                                                placeholderTextColor="#7A8A99"
-                                                value={registerForm.houseNo}
-                                                onChangeText={(text) => handleRegisterFormChange('houseNo', text)}
-                                            />
-                                            {registerErrors.houseNo ? <Text style={styles.errorText}>{registerErrors.houseNo}</Text> : null}
-                                        </View>
+                                        {activeTab === 'resident' ? (
+                                            <>
+                                                <View style={styles.modalInputGroup}>
+                                                    <Text style={styles.modalLabel}>House Number <Text style={{ color: 'red' }}>*</Text></Text>
+                                                    <TextInput
+                                                        style={styles.modalInput}
+                                                        placeholder="Enter House No."
+                                                        placeholderTextColor="#7A8A99"
+                                                        value={registerForm.houseNo}
+                                                        onChangeText={(text) => handleRegisterFormChange('houseNo', text)}
+                                                    />
+                                                    {registerErrors.houseNo ? <Text style={styles.errorText}>{registerErrors.houseNo}</Text> : null}
+                                                </View>
 
-                                        <View style={styles.modalInputGroup}>
-                                            <Text style={styles.modalLabel}>House Address <Text style={{ color: 'red' }}>*</Text></Text>
-                                            <TextInput
-                                                style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]}
-                                                placeholder="Enter Full Address"
-                                                placeholderTextColor="#7A8A99"
-                                                value={registerForm.address}
-                                                onChangeText={(text) => handleRegisterFormChange('address', text)}
-                                                multiline
-                                            />
-                                            {registerErrors.address ? <Text style={styles.errorText}>{registerErrors.address}</Text> : null}
-                                        </View>
+                                                <View style={styles.modalInputGroup}>
+                                                    <Text style={styles.modalLabel}>House Address <Text style={{ color: 'red' }}>*</Text></Text>
+                                                    <TextInput
+                                                        style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]}
+                                                        placeholder="Enter Full Address"
+                                                        placeholderTextColor="#7A8A99"
+                                                        value={registerForm.address}
+                                                        onChangeText={(text) => handleRegisterFormChange('address', text)}
+                                                        multiline
+                                                    />
+                                                    {registerErrors.address ? <Text style={styles.errorText}>{registerErrors.address}</Text> : null}
+                                                </View>
+                                            </>
+                                        ) : (
+                                            <View style={styles.modalInputGroup}>
+                                                <Text style={styles.modalLabel}>Official Unique ID <Text style={{ color: 'red' }}>*</Text></Text>
+                                                <TextInput
+                                                    style={styles.modalInput}
+                                                    placeholder="Enter Official ID"
+                                                    placeholderTextColor="#7A8A99"
+                                                    value={registerForm.officialId}
+                                                    onChangeText={(text) => handleRegisterFormChange('officialId', text)}
+                                                    autoCapitalize="characters"
+                                                />
+                                                {registerErrors.officialId ? <Text style={styles.errorText}>{registerErrors.officialId}</Text> : null}
+                                            </View>
+                                        )}
 
                                         <TouchableOpacity onPress={handleSubmitDetails} activeOpacity={0.8} disabled={registerIsLoading}>
                                             <LinearGradient
@@ -538,8 +507,8 @@ export default function LoginScreen() {
                                         </TouchableOpacity>
                                     </View>
                                 )}
-                            </View>
-                        </TouchableWithoutFeedback>
+                            </ScrollView>
+                        </View>
                     </KeyboardAvoidingView>
                 </Modal>
             </View>
