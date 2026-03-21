@@ -1,9 +1,10 @@
 import { auth as firebaseAuth } from '@/app/firebase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { updatePassword } from 'firebase/auth';
-import { doc, getDoc, getFirestore, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getFirestore, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -43,6 +44,8 @@ interface Order {
     date: string;
     time: string;
     status: string;
+    weight?: string;
+    points?: string;
 }
 
 interface ResidentProfile {
@@ -53,9 +56,45 @@ interface ResidentProfile {
     address: string;
 }
 
+const normalizeOrderStatus = (status?: string) => {
+    const value = (status || '').trim().toLowerCase();
+    if (value === 'completed') return 'Completed';
+    if (value === 'cancelled' || value === 'canceled') return 'Cancelled';
+    return status?.trim() || 'Scheduled';
+};
+
+const BUSINESS_HOUR_START = 9;
+const BUSINESS_HOUR_END = 17;
+
+const isWithinBusinessHours = (time: Date) => {
+    const minutes = time.getHours() * 60 + time.getMinutes();
+    const minMinutes = BUSINESS_HOUR_START * 60;
+    const maxMinutes = BUSINESS_HOUR_END * 60;
+    return minutes >= minMinutes && minutes <= maxMinutes;
+};
+
+const clampToBusinessHours = (time: Date) => {
+    const clamped = new Date(time);
+    const minutes = clamped.getHours() * 60 + clamped.getMinutes();
+    const minMinutes = BUSINESS_HOUR_START * 60;
+    const maxMinutes = BUSINESS_HOUR_END * 60;
+
+    if (minutes < minMinutes) {
+        clamped.setHours(BUSINESS_HOUR_START, 0, 0, 0);
+    } else if (minutes > maxMinutes) {
+        clamped.setHours(BUSINESS_HOUR_END, 0, 0, 0);
+    }
+
+    return clamped;
+};
+
+const getMinutesOfDay = (time: Date) => time.getHours() * 60 + time.getMinutes();
+
 export default function HomeScreen() {
     const [activeTab, setActiveTab] = useState('home');
     const [orders, setOrders] = useState<Order[]>([]);
+    const [isOrdersLoading, setIsOrdersLoading] = useState(true);
+    const [orderActionLoadingId, setOrderActionLoadingId] = useState<string | null>(null);
     const [profile, setProfile] = useState<ResidentProfile | null>(null);
     const [isProfileLoading, setIsProfileLoading] = useState(true);
     const { currentUser, logout } = useAuth();
@@ -82,21 +121,42 @@ export default function HomeScreen() {
         setEndTime(null);
     };
 
-    const handleConfirmBooking = () => {
+    const handleConfirmBooking = async () => {
         if (!selectedDate || !startTime || !endTime) return;
+
+        if (getMinutesOfDay(endTime) <= getMinutesOfDay(startTime)) {
+            Alert.alert('Invalid Time Window', 'End time must be later than start time.');
+            return;
+        }
+
+        const userId = currentUser?.id || firebaseAuth.currentUser?.uid;
+        if (!userId) {
+            Alert.alert('Error', 'Please login again to schedule pickup.');
+            return;
+        }
 
         const timeString = `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
-        const newOrder: Order = {
-            id: Math.random().toString(36).substr(2, 9).toUpperCase(),
-            type: 'Scrap/Recyclable Waste',
-            date: selectedDate.toLocaleDateString(),
-            time: timeString,
-            status: 'Scheduled',
-        };
-        setOrders([newOrder, ...orders]);
-        setIsBooking(false);
-        setActiveTab('orders');
+        try {
+            const firestore = getFirestore();
+            await addDoc(collection(firestore, 'orders'), {
+                userId,
+                type: 'Scrap/Recyclable Waste',
+                date: selectedDate.toLocaleDateString(),
+                time: timeString,
+                status: 'Scheduled',
+                weight: '-',
+                points: '0 Points',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+            });
+
+            setIsBooking(false);
+            setActiveTab('orders');
+            Alert.alert('Success', 'Pickup scheduled successfully.');
+        } catch {
+            Alert.alert('Error', 'Failed to schedule pickup. Please try again.');
+        }
     };
 
     const handleCancelBooking = () => {
@@ -109,6 +169,30 @@ export default function HomeScreen() {
         setSelectedDate(null);
         setStartTime(null);
         setEndTime(null);
+    };
+
+    const handleCancelOrder = (orderId: string) => {
+        Alert.alert('Cancel Pickup', 'Are you sure you want to cancel this scheduled pickup?', [
+            { text: 'No', style: 'cancel' },
+            {
+                text: 'Yes, Cancel',
+                style: 'destructive',
+                onPress: async () => {
+                    try {
+                        setOrderActionLoadingId(orderId);
+                        const firestore = getFirestore();
+                        await updateDoc(doc(firestore, 'orders', orderId), {
+                            status: 'Cancelled',
+                            updatedAt: Date.now(),
+                        });
+                    } catch {
+                        Alert.alert('Error', 'Unable to cancel order right now.');
+                    } finally {
+                        setOrderActionLoadingId(null);
+                    }
+                },
+            },
+        ]);
     };
 
     const handleTabChange = (tabId: string) => {
@@ -154,6 +238,58 @@ export default function HomeScreen() {
 
         loadProfile();
     }, [currentUser]);
+
+    useEffect(() => {
+        const userId = currentUser?.id || firebaseAuth.currentUser?.uid;
+        if (!userId) {
+            setOrders([]);
+            setIsOrdersLoading(false);
+            return;
+        }
+
+        setIsOrdersLoading(true);
+        const firestore = getFirestore();
+        const ordersQuery = query(collection(firestore, 'orders'), where('userId', '==', userId));
+
+        const unsubscribe = onSnapshot(
+            ordersQuery,
+            (snapshot) => {
+                const nextOrders: Order[] = snapshot.docs
+                    .map((item) => {
+                        const data = item.data() as Partial<Order> & { createdAt?: number; updatedAt?: number };
+                        return {
+                            id: item.id,
+                            type: data.type || 'Scrap/Recyclable Waste',
+                            date: data.date || '-',
+                            time: data.time || '-',
+                            status: normalizeOrderStatus(data.status),
+                            weight: data.weight || '-',
+                            points: data.points || '0 Points',
+                            createdAt: data.createdAt || 0,
+                            updatedAt: data.updatedAt || 0,
+                        };
+                    })
+                    .sort((a, b) => {
+                        const aSort = a.updatedAt || a.createdAt || 0;
+                        const bSort = b.updatedAt || b.createdAt || 0;
+                        return bSort - aSort;
+                    })
+                    .map(({ createdAt, updatedAt, ...order }) => order as Order);
+
+                setOrders(nextOrders);
+                setIsOrdersLoading(false);
+            },
+            () => {
+                setIsOrdersLoading(false);
+                Alert.alert('Error', 'Failed to load orders from Firebase.');
+            }
+        );
+
+        return () => unsubscribe();
+    }, [currentUser]);
+
+    const activeOrders = orders.filter((order) => order.status !== 'Cancelled' && order.status !== 'Completed');
+    const historyOrders = orders.filter((order) => order.status === 'Cancelled' || order.status === 'Completed');
 
     const handleLogout = async () => {
         try {
@@ -263,11 +399,17 @@ export default function HomeScreen() {
                 )}
 
                 {activeTab === 'orders' && (
-                    <OrdersContent orders={orders} onSchedulePickup={handleSchedulePickup} />
+                    <OrdersContent
+                        orders={activeOrders}
+                        onSchedulePickup={handleSchedulePickup}
+                        onCancelOrder={handleCancelOrder}
+                        isOrdersLoading={isOrdersLoading}
+                        orderActionLoadingId={orderActionLoadingId}
+                    />
                 )}
 
                 {/* Additional Tabs */}
-                {activeTab === 'history' && <HistoryContent />}
+                {activeTab === 'history' && <HistoryContent historyOrders={historyOrders} isOrdersLoading={isOrdersLoading} />}
                 {activeTab === 'profile' && (
                     <ProfileContent
                         profile={profile}
@@ -497,7 +639,56 @@ const BookingContent = ({
     onConfirm: () => void,
     onCancel: () => void
 }) => {
-    const isConfirmEnabled = selectedDate && startTime && endTime;
+    const hasAllBookingValues = Boolean(selectedDate && startTime && endTime);
+    const isTimeWindowValid = Boolean(
+        startTime && endTime && getMinutesOfDay(endTime) > getMinutesOfDay(startTime)
+    );
+    const isConfirmEnabled = hasAllBookingValues && isTimeWindowValid;
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [showStartTimePicker, setShowStartTimePicker] = useState(false);
+    const [showEndTimePicker, setShowEndTimePicker] = useState(false);
+
+    const getDefaultTime = (hour: number) => {
+        const value = new Date();
+        value.setHours(hour, 0, 0, 0);
+        return value;
+    };
+
+    const datePickerDisplay = Platform.OS === 'ios' ? 'inline' : 'calendar';
+    const timePickerDisplay = Platform.OS === 'ios' ? 'spinner' : 'clock';
+
+    const handleDatePickerChange = (event: DateTimePickerEvent, date?: Date) => {
+        if (Platform.OS === 'android') {
+            setShowDatePicker(false);
+        }
+        if (event.type !== 'set' || !date) return;
+        onDateChange(date);
+    };
+
+    const handleTimePickerChange = (
+        event: DateTimePickerEvent,
+        date: Date | undefined,
+        picker: 'start' | 'end'
+    ) => {
+        if (Platform.OS === 'android') {
+            if (picker === 'start') setShowStartTimePicker(false);
+            if (picker === 'end') setShowEndTimePicker(false);
+        }
+
+        if (event.type !== 'set' || !date) return;
+
+        let adjustedTime = date;
+        if (!isWithinBusinessHours(date)) {
+            adjustedTime = clampToBusinessHours(date);
+            Alert.alert(
+                'Outside Service Hours',
+                `Pickup time should be between 9:00 AM and 5:00 PM. Adjusted to ${adjustedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+            );
+        }
+
+        if (picker === 'start') onStartTimeChange(adjustedTime);
+        if (picker === 'end') onEndTimeChange(adjustedTime);
+    };
 
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -525,13 +716,28 @@ const BookingContent = ({
                             {selectedDate ? selectedDate.toLocaleDateString() : 'Choose a date'}
                         </Text>
                     </View>
-                    <TouchableOpacity onPress={() => onDateChange(new Date())}>
+                    <TouchableOpacity onPress={() => setShowDatePicker(true)}>
                         <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
                     </TouchableOpacity>
                 </View>
+                {showDatePicker && (
+                    <View style={styles.pickerContainer}>
+                        <DateTimePicker
+                            value={selectedDate || new Date()}
+                            mode="date"
+                            display={datePickerDisplay}
+                            minimumDate={new Date()}
+                            onChange={handleDatePickerChange}
+                        />
+                    </View>
+                )}
 
                 {/* Time Selection */}
                 <Text style={[styles.inputLabel, { marginTop: 24 }]}>Select Time Window</Text>
+                <Text style={styles.inputHint}>Pickup hours: 9:00 AM to 5:00 PM</Text>
+                {hasAllBookingValues && !isTimeWindowValid && (
+                    <Text style={styles.errorLabel}>End time must be later than start time.</Text>
+                )}
 
                 <View style={styles.timeRowsContainer}>
                     {/* Start Time */}
@@ -548,10 +754,21 @@ const BookingContent = ({
                                     {startTime ? startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Start Time'}
                                 </Text>
                             </View>
-                            <TouchableOpacity onPress={() => onStartTimeChange(new Date(new Date().setHours(9, 0, 0, 0)))}>
+                            <TouchableOpacity onPress={() => setShowStartTimePicker(true)}>
                                 <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
                             </TouchableOpacity>
                         </View>
+                        {showStartTimePicker && (
+                            <View style={styles.pickerContainer}>
+                                <DateTimePicker
+                                    value={startTime || getDefaultTime(BUSINESS_HOUR_START)}
+                                    mode="time"
+                                    is24Hour={false}
+                                    display={timePickerDisplay}
+                                    onChange={(event, date) => handleTimePickerChange(event, date, 'start')}
+                                />
+                            </View>
+                        )}
                     </View>
 
                     {/* End Time */}
@@ -568,14 +785,21 @@ const BookingContent = ({
                                     {endTime ? endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'End Time'}
                                 </Text>
                             </View>
-                            <TouchableOpacity onPress={() => {
-                                const end = new Date();
-                                end.setHours(11, 0, 0, 0);
-                                onEndTimeChange(end);
-                            }}>
+                            <TouchableOpacity onPress={() => setShowEndTimePicker(true)}>
                                 <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
                             </TouchableOpacity>
                         </View>
+                        {showEndTimePicker && (
+                            <View style={styles.pickerContainer}>
+                                <DateTimePicker
+                                    value={endTime || getDefaultTime(BUSINESS_HOUR_END)}
+                                    mode="time"
+                                    is24Hour={false}
+                                    display={timePickerDisplay}
+                                    onChange={(event, date) => handleTimePickerChange(event, date, 'end')}
+                                />
+                            </View>
+                        )}
                     </View>
                 </View>
 
@@ -614,7 +838,28 @@ const BookingContent = ({
 };
 
 
-const OrdersContent = ({ orders, onSchedulePickup }: { orders: Order[], onSchedulePickup: () => void }) => {
+const OrdersContent = ({
+    orders,
+    onSchedulePickup,
+    onCancelOrder,
+    isOrdersLoading,
+    orderActionLoadingId,
+}: {
+    orders: Order[];
+    onSchedulePickup: () => void;
+    onCancelOrder: (orderId: string) => void;
+    isOrdersLoading: boolean;
+    orderActionLoadingId: string | null;
+}) => {
+    if (isOrdersLoading) {
+        return (
+            <View style={styles.emptyStateContainer}>
+                <ActivityIndicator size="large" color="#00c853" />
+                <Text style={[styles.emptyStateDescription, { marginTop: 16, marginBottom: 0 }]}>Loading your orders...</Text>
+            </View>
+        );
+    }
+
     if (orders.length === 0) {
         return (
             <View style={styles.emptyStateContainer}>
@@ -652,32 +897,76 @@ const OrdersContent = ({ orders, onSchedulePickup }: { orders: Order[], onSchedu
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <View style={[styles.contentSection, { paddingTop: 40 }]}>
                 <Text style={styles.sectionTitle}>Your Orders ({orders.length})</Text>
-                {orders.map((order) => (
-                    <LinearGradient
-                        key={order.id}
-                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.orderCard}
-                    >
-                        <View style={styles.orderHeader}>
-                            <Text style={styles.orderId}>Order #{order.id}</Text>
-                            <Text style={styles.orderStatus}>{order.status}</Text>
-                        </View>
-                        <Text style={styles.orderType}>{order.type}</Text>
-                        <View style={styles.orderFooter}>
-                            <MaterialCommunityIcons name="calendar" size={14} color="#7b8a9e" />
-                            <Text style={styles.orderDate}>{order.date}</Text>
-                            {order.time && (
-                                <>
-                                    <View style={{ width: 10 }} />
-                                    <MaterialCommunityIcons name="clock-outline" size={14} color="#7b8a9e" />
-                                    <Text style={styles.orderDate}>{order.time}</Text>
-                                </>
-                            )}
-                        </View>
-                    </LinearGradient>
-                ))}
+                {orders.map((order) => {
+                    const statusValue = order.status.trim().toLowerCase();
+                    const isInProgress =
+                        statusValue === 'in progress' ||
+                        statusValue === 'in-progress' ||
+                        statusValue === 'processing';
+                    const isScheduled = statusValue === 'scheduled';
+
+                    return (
+                        <LinearGradient
+                            key={order.id}
+                            colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.orderCard}
+                        >
+                            <View style={styles.orderHeader}>
+                                <Text style={styles.orderId}>Order #{order.id}</Text>
+                                <View
+                                    style={[
+                                        styles.orderStatusBadge,
+                                        isInProgress
+                                            ? styles.orderStatusInProgressBadge
+                                            : isScheduled
+                                                ? styles.orderStatusScheduledBadge
+                                                : styles.orderStatusDefaultBadge,
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.orderStatusText,
+                                            isInProgress
+                                                ? styles.orderStatusInProgressText
+                                                : isScheduled
+                                                    ? styles.orderStatusScheduledText
+                                                    : styles.orderStatusDefaultText,
+                                        ]}
+                                    >
+                                        {order.status}
+                                    </Text>
+                                </View>
+                            </View>
+                            <Text style={styles.orderType}>{order.type}</Text>
+                            <View style={styles.orderFooter}>
+                                <MaterialCommunityIcons name="calendar" size={14} color="#7b8a9e" />
+                                <Text style={styles.orderDate}>{order.date}</Text>
+                                {order.time && (
+                                    <>
+                                        <View style={{ width: 10 }} />
+                                        <MaterialCommunityIcons name="clock-outline" size={14} color="#7b8a9e" />
+                                        <Text style={styles.orderDate}>{order.time}</Text>
+                                    </>
+                                )}
+                            </View>
+
+                            <TouchableOpacity
+                                style={styles.orderCancelButton}
+                                activeOpacity={0.8}
+                                onPress={() => onCancelOrder(order.id)}
+                                disabled={orderActionLoadingId === order.id}
+                            >
+                                {orderActionLoadingId === order.id ? (
+                                    <ActivityIndicator size="small" color="#ff8a80" />
+                                ) : (
+                                    <Text style={styles.orderCancelButtonText}>Cancel Pickup</Text>
+                                )}
+                            </TouchableOpacity>
+                        </LinearGradient>
+                    );
+                })}
             </View>
             <View style={{ height: 100 }} />
         </ScrollView>
@@ -690,46 +979,19 @@ const PlaceholderContent = ({ title }: { title: string }) => (
     </View>
 );
 
-const MOCK_HISTORY_DATA = [
-    {
-        id: 'ORD-99382',
-        type: 'Scrap/Recyclable Waste',
-        date: '12 Feb 2024',
-        time: '10:30 AM',
-        status: 'Completed',
-        weight: '15.5 kg',
-        points: '+45 Points'
-    },
-    {
-        id: 'ORD-88271',
-        type: 'E-Waste Collection',
-        date: '28 Jan 2024',
-        time: '02:15 PM',
-        status: 'Completed',
-        weight: '5.2 kg',
-        points: '+20 Points'
-    },
-    {
-        id: 'ORD-77160',
-        type: 'Scrap/Recyclable Waste',
-        date: '10 Jan 2024',
-        time: '11:00 AM',
-        status: 'Cancelled',
-        weight: '-',
-        points: '0 Points'
-    },
-    {
-        id: 'ORD-66059',
-        type: 'Bulk Waste',
-        date: '15 Dec 2023',
-        time: '09:45 AM',
-        status: 'Completed',
-        weight: '45.0 kg',
-        points: '+150 Points'
-    }
-];
+const HistoryContent = ({
+    historyOrders,
+    isOrdersLoading,
+}: {
+    historyOrders: Order[];
+    isOrdersLoading: boolean;
+}) => {
+    const completedOrders = historyOrders.filter((item) => item.status === 'Completed');
+    const totalPoints = completedOrders.reduce((acc, item) => {
+        const pointsValue = Number((item.points || '0').replace(/[^0-9]/g, ''));
+        return acc + (Number.isNaN(pointsValue) ? 0 : pointsValue);
+    }, 0);
 
-const HistoryContent = () => {
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header / Summary Area */}
@@ -743,12 +1005,12 @@ const HistoryContent = () => {
 
                 <View style={[styles.statsContainer, { marginTop: 20, backgroundColor: 'transparent', borderWidth: 0, padding: 0, shadowOpacity: 0 }]}>
                     <View style={styles.statBox}>
-                        <Text style={styles.statValue}>12</Text>
+                        <Text style={styles.statValue}>{historyOrders.length}</Text>
                         <Text style={styles.statLabel}>Total Pickups</Text>
                     </View>
                     <View style={styles.statDivider} />
                     <View style={styles.statBox}>
-                        <Text style={styles.statValue}>340</Text>
+                        <Text style={styles.statValue}>{totalPoints}</Text>
                         <Text style={styles.statLabel}>Lifetime Points</Text>
                     </View>
                 </View>
@@ -757,14 +1019,19 @@ const HistoryContent = () => {
             <View style={styles.contentSection}>
                 <Text style={styles.sectionTitle}>Recent Orders</Text>
 
-                {MOCK_HISTORY_DATA.length === 0 ? (
+                {isOrdersLoading ? (
+                    <View style={styles.emptyStateContainer}>
+                        <ActivityIndicator size="large" color="#00c853" />
+                        <Text style={[styles.emptyStateDescription, { marginTop: 16, marginBottom: 0 }]}>Loading history...</Text>
+                    </View>
+                ) : historyOrders.length === 0 ? (
                     <View style={styles.emptyStateContainer}>
                         <MaterialCommunityIcons name="history" size={80} color="#263345" style={{ marginBottom: 16 }} />
                         <Text style={styles.emptyStateTitle}>No History found</Text>
                         <Text style={styles.emptyStateDescription}>You don't have any past orders yet.</Text>
                     </View>
                 ) : (
-                    MOCK_HISTORY_DATA.map((item) => (
+                    historyOrders.map((item) => (
                         <View key={item.id} style={styles.historyCard}>
                             <View style={styles.historyCardHeader}>
                                 <View>
@@ -1427,10 +1694,37 @@ const styles = StyleSheet.create({
         color: '#7b8a9e',
         fontSize: 14,
     },
-    orderStatus: {
-        color: '#00c853',
-        fontWeight: '600',
-        fontSize: 14,
+    orderStatusBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        borderWidth: 1,
+    },
+    orderStatusText: {
+        fontSize: 12,
+        fontWeight: '700',
+        letterSpacing: 0.2,
+    },
+    orderStatusScheduledBadge: {
+        backgroundColor: 'rgba(0, 200, 83, 0.12)',
+        borderColor: 'rgba(0, 200, 83, 0.35)',
+    },
+    orderStatusScheduledText: {
+        color: '#00e676',
+    },
+    orderStatusInProgressBadge: {
+        backgroundColor: 'rgba(255, 193, 7, 0.14)',
+        borderColor: 'rgba(255, 193, 7, 0.4)',
+    },
+    orderStatusInProgressText: {
+        color: '#ffd54f',
+    },
+    orderStatusDefaultBadge: {
+        backgroundColor: 'rgba(66, 165, 245, 0.14)',
+        borderColor: 'rgba(66, 165, 245, 0.42)',
+    },
+    orderStatusDefaultText: {
+        color: '#90caf9',
     },
     orderType: {
         color: '#e0eee6',
@@ -1447,6 +1741,20 @@ const styles = StyleSheet.create({
         color: '#7b8a9e',
         fontSize: 14,
     },
+    orderCancelButton: {
+        marginTop: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(229, 57, 53, 0.45)',
+        borderRadius: 10,
+        paddingVertical: 10,
+        alignItems: 'center',
+        backgroundColor: 'rgba(229, 57, 53, 0.08)',
+    },
+    orderCancelButtonText: {
+        color: '#ff8a80',
+        fontSize: 14,
+        fontWeight: '700',
+    },
     placeholderContainer: {
         flex: 1,
         alignItems: 'center',
@@ -1461,6 +1769,21 @@ const styles = StyleSheet.create({
         color: '#d0d8e4',
         marginBottom: 10,
         fontWeight: '600',
+    },
+    inputHint: {
+        fontSize: 13,
+        color: '#7b8a9e',
+        marginTop: -4,
+        marginBottom: 10,
+    },
+    pickerContainer: {
+        marginTop: 10,
+        backgroundColor: '#0f1a26',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#263345',
+        paddingHorizontal: 8,
+        paddingVertical: Platform.OS === 'ios' ? 8 : 4,
     },
     inputCard: {
         flexDirection: 'row',
