@@ -21,6 +21,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from './context/AuthContext';
 import authService from './services/authService';
 
 
@@ -37,6 +38,7 @@ export default function LoginScreen() {
     const [registerStep, setRegisterStep] = useState<'details' | 'otp'>('details');
     const [registerForm, setRegisterForm] = useState({
         name: '',
+        mobileNo: '',
         email: '',
         password: '',
         confirmPassword: '',
@@ -48,6 +50,7 @@ export default function LoginScreen() {
     const [registerVerificationId, setRegisterVerificationId] = useState('');
     const [registerErrors, setRegisterErrors] = useState({
         name: '',
+        mobileNo: '',
         email: '',
         password: '',
         confirmPassword: '',
@@ -58,23 +61,83 @@ export default function LoginScreen() {
     const [registerIsLoading, setRegisterIsLoading] = useState(false);
 
     const router = useRouter();
+    const auth = useAuth();
 
     // Login Logic
     const handleLogin = async () => {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (emailRegex.test(email)) {
-            setIsLoading(true);
-            try {
-                // Using new passwordless email OTP flow
-                const result = await authService.loginWithEmail(email);
+        if (activeTab === 'resident') {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (emailRegex.test(email) && password.length >= 6) {
+                setIsLoading(true);
+                try {
+                    const result = await auth.login(email, password);
+                    if (result.success) {
+                        router.replace('/home');
+                    } else {
+                        const errorMsg = (result.error || '').toLowerCase();
+                        if (
+                            errorMsg.includes('user-not-found') ||
+                            errorMsg.includes('wrong-password') ||
+                            errorMsg.includes('invalid-credential')
+                        ) {
+                            Alert.alert(
+                                'Login failed',
+                                'No account matching that email was found. Would you like to register?',
+                                [
+                                    { text: 'Cancel', style: 'cancel' },
+                                    {
+                                        text: 'Register',
+                                        onPress: async () => {
+                                            setIsLoading(true);
+                                            try {
+                                                const reg = await auth.register(email, password);
+                                                if (reg.success) {
+                                                    router.replace('/home');
+                                                } else {
+                                                    Alert.alert('Register failed', reg.error || 'Unable to create account');
+                                                }
+                                            } catch (regErr: any) {
+                                                Alert.alert('Error', regErr.message || 'Unexpected error');
+                                            } finally {
+                                                setIsLoading(false);
+                                            }
+                                        },
+                                    },
+                                ]
+                            );
+                        } else {
+                            Alert.alert('Error', result.error || 'Failed to login');
+                        }
+                    }
+                } catch (error: any) {
+                    const errorMsg = error.message || 'An unexpected error occurred';
+                    Alert.alert('Error', errorMsg);
+                } finally {
+                    setIsLoading(false);
+                }
+            } else {
+                Alert.alert('Invalid', 'Please enter a valid email and password (minimum 6 characters).');
+            }
+        } else {
+            // Official Login Logic (OTP-based)
+            if (officialUserId) {
+                setIsLoading(true);
+                try {
+                    const result = await authService.sendOTP(officialUserId);
 
-                if (result.success && result.needsOtp) {
-                    router.push({
-                        pathname: '/verify-otp',
-                        params: { email, verificationId: result.verificationId }
-                    });
-                } else {
-                    Alert.alert('Error', result.error || 'Failed to login');
+                    if (result.success && result.verificationId) {
+                        router.push({
+                            pathname: '/official-verify-otp',
+                            params: { verificationId: result.verificationId, officialId: officialUserId },
+                        });
+                    } else {
+                        Alert.alert('Error', result.error || 'Failed to send OTP');
+                    }
+                } catch (error: any) {
+                    const errorMsg = error.message || 'An unexpected error occurred';
+                    Alert.alert('Error', errorMsg);
+                } finally {
+                    setIsLoading(false);
                 }
             } catch (error: any) {
                 const errorMsg = error.message || 'An unexpected error occurred';
@@ -96,9 +159,9 @@ export default function LoginScreen() {
     const openRegisterModal = () => {
         setRegisterModalVisible(true);
         setRegisterStep('details');
-        setRegisterForm({ name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '', officialId: '' });
+        setRegisterForm({ name: '', mobileNo: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' });
         setRegisterOtp('');
-        setRegisterErrors({ name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '', officialId: '' });
+        setRegisterErrors({ name: '', mobileNo: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' });
     };
 
     const closeRegisterModal = () => {
@@ -113,11 +176,19 @@ export default function LoginScreen() {
 
     const validateRegisterForm = () => {
         let isValid = true;
-        const errors = { name: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '', officialId: '' };
+        const errors = { name: '', mobileNo: '', email: '', password: '', confirmPassword: '', houseNo: '', address: '' };
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
         if (!registerForm.name.trim()) {
             errors.name = 'Name is required';
+            isValid = false;
+        }
+        if (!registerForm.mobileNo.trim() || !/^[0-9]{10}$/.test(registerForm.mobileNo.replace(/\D/g, ''))) {
+            errors.mobileNo = 'Valid 10-digit mobile number is required';
+            isValid = false;
+        }
+        if (!registerForm.email.trim() || !emailRegex.test(registerForm.email)) {
+            errors.email = 'Valid email is required';
             isValid = false;
         }
         if (registerForm.password.length < 6) {
@@ -366,7 +437,7 @@ export default function LoginScreen() {
                                 </View>
 
                                 {registerStep === 'details' ? (
-                                    <View style={styles.modalBody}>
+                                    <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
                                         <View style={styles.modalInputGroup}>
                                             <Text style={styles.modalLabel}>Name <Text style={{ color: 'red' }}>*</Text></Text>
                                             <TextInput
@@ -377,6 +448,20 @@ export default function LoginScreen() {
                                                 onChangeText={(text) => handleRegisterFormChange('name', text)}
                                             />
                                             {registerErrors.name ? <Text style={styles.errorText}>{registerErrors.name}</Text> : null}
+                                        </View>
+
+                                        <View style={styles.modalInputGroup}>
+                                            <Text style={styles.modalLabel}>Mobile Number <Text style={{ color: 'red' }}>*</Text></Text>
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Enter 10-digit mobile number"
+                                                placeholderTextColor="#7A8A99"
+                                                value={registerForm.mobileNo}
+                                                onChangeText={(text) => handleRegisterFormChange('mobileNo', text.replace(/\D/g, '').slice(0, 10))}
+                                                keyboardType="phone-pad"
+                                                maxLength={10}
+                                            />
+                                            {registerErrors.mobileNo ? <Text style={styles.errorText}>{registerErrors.mobileNo}</Text> : null}
                                         </View>
 
                                         <View style={styles.modalInputGroup}>
@@ -394,29 +479,28 @@ export default function LoginScreen() {
                                         </View>
 
                                         <View style={styles.modalInputGroup}>
-                                            <Text style={styles.modalLabel}>Password <Text style={{ color: 'red' }}>*</Text></Text>
+                                            <Text style={styles.modalLabel}>House Number <Text style={{ color: 'red' }}>*</Text></Text>
                                             <TextInput
                                                 style={styles.modalInput}
-                                                placeholder="Enter Password"
+                                                placeholder="Enter House No."
                                                 placeholderTextColor="#7A8A99"
-                                                value={registerForm.password}
-                                                onChangeText={(text) => handleRegisterFormChange('password', text)}
-                                                secureTextEntry
+                                                value={registerForm.houseNo}
+                                                onChangeText={(text) => handleRegisterFormChange('houseNo', text)}
                                             />
-                                            {registerErrors.password ? <Text style={styles.errorText}>{registerErrors.password}</Text> : null}
+                                            {registerErrors.houseNo ? <Text style={styles.errorText}>{registerErrors.houseNo}</Text> : null}
                                         </View>
 
                                         <View style={styles.modalInputGroup}>
-                                            <Text style={styles.modalLabel}>Confirm Password <Text style={{ color: 'red' }}>*</Text></Text>
+                                            <Text style={styles.modalLabel}>House Address <Text style={{ color: 'red' }}>*</Text></Text>
                                             <TextInput
-                                                style={styles.modalInput}
-                                                placeholder="Confirm Password"
+                                                style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]}
+                                                placeholder="Enter Full Address"
                                                 placeholderTextColor="#7A8A99"
-                                                value={registerForm.confirmPassword}
-                                                onChangeText={(text) => handleRegisterFormChange('confirmPassword', text)}
-                                                secureTextEntry
+                                                value={registerForm.address}
+                                                onChangeText={(text) => handleRegisterFormChange('address', text)}
+                                                multiline
                                             />
-                                            {registerErrors.confirmPassword ? <Text style={styles.errorText}>{registerErrors.confirmPassword}</Text> : null}
+                                            {registerErrors.address ? <Text style={styles.errorText}>{registerErrors.address}</Text> : null}
                                         </View>
 
                                         {activeTab === 'resident' ? (
@@ -460,6 +544,31 @@ export default function LoginScreen() {
                                                 {registerErrors.officialId ? <Text style={styles.errorText}>{registerErrors.officialId}</Text> : null}
                                             </View>
                                         )}
+                                        <View style={styles.modalInputGroup}>
+                                            <Text style={styles.modalLabel}>Password <Text style={{ color: 'red' }}>*</Text></Text>
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Enter Password"
+                                                placeholderTextColor="#7A8A99"
+                                                value={registerForm.password}
+                                                onChangeText={(text) => handleRegisterFormChange('password', text)}
+                                                secureTextEntry
+                                            />
+                                            {registerErrors.password ? <Text style={styles.errorText}>{registerErrors.password}</Text> : null}
+                                        </View>
+
+                                        <View style={styles.modalInputGroup}>
+                                            <Text style={styles.modalLabel}>Confirm Password <Text style={{ color: 'red' }}>*</Text></Text>
+                                            <TextInput
+                                                style={styles.modalInput}
+                                                placeholder="Confirm Password"
+                                                placeholderTextColor="#7A8A99"
+                                                value={registerForm.confirmPassword}
+                                                onChangeText={(text) => handleRegisterFormChange('confirmPassword', text)}
+                                                secureTextEntry
+                                            />
+                                            {registerErrors.confirmPassword ? <Text style={styles.errorText}>{registerErrors.confirmPassword}</Text> : null}
+                                        </View>
 
                                         <TouchableOpacity onPress={handleSubmitDetails} activeOpacity={0.8} disabled={registerIsLoading}>
                                             <LinearGradient
@@ -473,9 +582,9 @@ export default function LoginScreen() {
                                                 )}
                                             </LinearGradient>
                                         </TouchableOpacity>
-                                    </View>
+                                    </ScrollView>
                                 ) : (
-                                    <View style={styles.modalBody}>
+                                    <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
                                         <Text style={styles.otpInstruction}>
                                             Please enter the OTP sent to {registerForm.email}
                                         </Text>
@@ -505,7 +614,7 @@ export default function LoginScreen() {
                                         <TouchableOpacity onPress={() => setRegisterStep('details')} style={{ marginTop: 15 }}>
                                             <Text style={{ color: '#7b8a9e', textAlign: 'center' }}>Edit details</Text>
                                         </TouchableOpacity>
-                                    </View>
+                                    </ScrollView>
                                 )}
                             </ScrollView>
                         </View>
