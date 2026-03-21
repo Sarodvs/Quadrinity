@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import React, { useState } from 'react';
 import {
     Alert,
@@ -15,8 +15,12 @@ import {
     Switch,
     Text,
     TouchableOpacity,
-    View
+    View,
+    Modal
 } from 'react-native';
+import { Calendar } from 'react-native-calendars';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import QRCode from 'react-native-qrcode-svg';
 import { ThemeContext } from './context/ThemeContext';
 import { auth, db } from './firebaseConfig';
 import authService from './services/authService';
@@ -37,12 +41,46 @@ interface Order {
     date: string;
     time: string;
     status: string;
+    dbId?: string;
 }
 
 export default function HomeScreen() {
     const { colors, isDark } = React.useContext(ThemeContext);
     const [activeTab, setActiveTab] = useState('home');
     const [orders, setOrders] = useState<Order[]>([]);
+
+    React.useEffect(() => {
+        const fetchOrders = async () => {
+            const userEmail = auth.currentUser?.email;
+            if (!userEmail) return;
+            try {
+                const q = query(
+                    collection(db, 'orders'),
+                    where('userEmail', '==', userEmail.toLowerCase())
+                );
+                const querySnapshot = await getDocs(q);
+                const fetchedOrders: Order[] = [];
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    fetchedOrders.push({
+                        id: docSnap.id.substring(0, 8).toUpperCase(),
+                        dbId: docSnap.id,
+                        type: data.type || 'Scrap/Recyclable Waste',
+                        date: data.date,
+                        time: data.time,
+                        status: data.status,
+                    });
+                });
+                setOrders(fetchedOrders);
+            } catch (error) {
+                console.error("Error fetching orders:", error);
+            }
+        };
+        
+        if (activeTab === 'orders' || activeTab === 'history') {
+            fetchOrders();
+        }
+    }, [activeTab]);
 
     // Booking State
     const [isBooking, setIsBooking] = useState(false);
@@ -57,21 +95,44 @@ export default function HomeScreen() {
         setEndTime(null);
     };
 
-    const handleConfirmBooking = () => {
+    const handleConfirmBooking = async () => {
         if (!selectedDate || !startTime || !endTime) return;
 
         const timeString = `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
-        const newOrder: Order = {
-            id: Math.random().toString(36).substr(2, 9).toUpperCase(),
-            type: 'Scrap/Recyclable Waste',
-            date: selectedDate.toLocaleDateString(),
-            time: timeString,
-            status: 'Scheduled',
-        };
-        setOrders([newOrder, ...orders]);
-        setIsBooking(false);
-        setActiveTab('orders');
+        try {
+            const userEmail = auth.currentUser?.email;
+            let residentName = 'Resident';
+            let address = '';
+            
+            if (userEmail) {
+                const userDoc = await getDoc(doc(db, 'users', userEmail.toLowerCase()));
+                if (userDoc.exists()) {
+                    residentName = userDoc.data().name || userEmail.split('@')[0];
+                    address = userDoc.data().address || '';
+                }
+            }
+
+            const newOrderData = {
+                userEmail: userEmail?.toLowerCase() || '',
+                residentName,
+                address,
+                type: 'Scrap/Recyclable Waste',
+                date: selectedDate.toLocaleDateString(),
+                time: timeString,
+                status: 'Scheduled',
+                createdAt: serverTimestamp(),
+            };
+
+            await addDoc(collection(db, 'orders'), newOrderData);
+            
+            Alert.alert("Success", "Pickup scheduled successfully!");
+            setIsBooking(false);
+            setActiveTab('orders');
+        } catch (error) {
+            console.error("Error booking pickup:", error);
+            Alert.alert("Error", "Failed to schedule pickup.");
+        }
     };
 
     const handleCancelBooking = () => {
@@ -118,7 +179,7 @@ export default function HomeScreen() {
                 )}
 
                 {/* Additional Tabs */}
-                {activeTab === 'history' && <HistoryContent />}
+                {activeTab === 'history' && <HistoryContent orders={orders} />}
                 {activeTab === 'profile' && <ProfileContent />}
 
                 {/* Bottom Navigation */}
@@ -344,6 +405,36 @@ const BookingContent = ({
     const { isDark, colors } = React.useContext(ThemeContext);
     const isConfirmEnabled = selectedDate && startTime && endTime;
 
+    const [isCalendarOpen, setCalendarOpen] = useState(false);
+    const [isStartTimeOpen, setStartTimeOpen] = useState(false);
+    const [isEndTimeOpen, setEndTimeOpen] = useState(false);
+    const [availableDates, setAvailableDates] = useState<any>({});
+
+    React.useEffect(() => {
+        const fetchAvailability = async () => {
+            const docRef = doc(db, 'system', 'collection_schedule');
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                const dates = docSnap.data().availableDates || [];
+                const marked: any = {};
+                dates.forEach((d: string) => {
+                    marked[d] = { marked: true, dotColor: '#00c853' };
+                });
+                setAvailableDates(marked);
+            }
+        };
+        fetchAvailability();
+    }, []);
+
+    const handleDayPress = (day: any) => {
+        if (!availableDates[day.dateString]) {
+            Alert.alert("Date Unavailable", "The official is not available on this date. Please choose a marked date.");
+            return;
+        }
+        onDateChange(new Date(day.dateString));
+        setCalendarOpen(false);
+    };
+
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header */}
@@ -370,10 +461,35 @@ const BookingContent = ({
                             {selectedDate ? selectedDate.toLocaleDateString() : 'Choose a date'}
                         </Text>
                     </View>
-                    <TouchableOpacity onPress={() => onDateChange(new Date())}>
-                        <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
+                    <TouchableOpacity onPress={() => setCalendarOpen(true)}>
+                        <Text style={{ color: '#00c853', fontWeight: '600' }}>{selectedDate ? 'Edit' : 'Select'}</Text>
                     </TouchableOpacity>
                 </View>
+
+                <Modal visible={isCalendarOpen} transparent animationType="slide">
+                    <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
+                        <View style={{ backgroundColor: isDark ? '#0f1a26' : colors.cardBg, borderRadius: 16, overflow: 'hidden' }}>
+                            <Calendar
+                                markedDates={{
+                                    ...availableDates,
+                                    ...(selectedDate ? { [selectedDate.toISOString().split('T')[0]]: { selected: true, selectedColor: '#00c853' } } : {})
+                                }}
+                                onDayPress={handleDayPress}
+                                minDate={new Date().toISOString().split('T')[0]}
+                                theme={{
+                                    backgroundColor: isDark ? '#0f1a26' : colors.cardBg,
+                                    calendarBackground: isDark ? '#0f1a26' : colors.cardBg,
+                                    monthTextColor: colors.text,
+                                    dayTextColor: colors.text,
+                                    todayTextColor: '#00c853',
+                                }}
+                            />
+                            <TouchableOpacity style={{ padding: 16, alignItems: 'center', backgroundColor: '#e53935' }} onPress={() => setCalendarOpen(false)}>
+                                <Text style={{ color: '#fff', fontWeight: '600' }}>Cancel</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
 
                 {/* Time Selection */}
                 <Text style={[styles.inputLabel, { marginTop: 24, color: colors.textSecondary }]}>Select Time Window</Text>
@@ -393,8 +509,8 @@ const BookingContent = ({
                                     {startTime ? startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Start Time'}
                                 </Text>
                             </View>
-                            <TouchableOpacity onPress={() => onStartTimeChange(new Date(new Date().setHours(9, 0, 0, 0)))}>
-                                <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
+                            <TouchableOpacity onPress={() => setStartTimeOpen(true)}>
+                                <Text style={{ color: '#00c853', fontWeight: '600' }}>{startTime ? 'Edit' : 'Select'}</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -413,16 +529,35 @@ const BookingContent = ({
                                     {endTime ? endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'End Time'}
                                 </Text>
                             </View>
-                            <TouchableOpacity onPress={() => {
-                                const end = new Date();
-                                end.setHours(11, 0, 0, 0);
-                                onEndTimeChange(end);
-                            }}>
-                                <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
+                            <TouchableOpacity onPress={() => setEndTimeOpen(true)}>
+                                <Text style={{ color: '#00c853', fontWeight: '600' }}>{endTime ? 'Edit' : 'Select'}</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
                 </View>
+
+                {isStartTimeOpen && (
+                    <DateTimePicker
+                        value={startTime || new Date()}
+                        mode="time"
+                        display="default"
+                        onChange={(event, date) => {
+                            setStartTimeOpen(false);
+                            if (date) onStartTimeChange(date);
+                        }}
+                    />
+                )}
+                {isEndTimeOpen && (
+                    <DateTimePicker
+                        value={endTime || new Date()}
+                        mode="time"
+                        display="default"
+                        onChange={(event, date) => {
+                            setEndTimeOpen(false);
+                            if (date) onEndTimeChange(date);
+                        }}
+                    />
+                )}
 
                 {/* Actions */}
                 <View style={{ marginTop: 40, gap: 16 }}>
@@ -536,47 +671,13 @@ const PlaceholderContent = ({ title }: { title: string }) => (
     </View>
 );
 
-const MOCK_HISTORY_DATA = [
-    {
-        id: 'ORD-99382',
-        type: 'Scrap/Recyclable Waste',
-        date: '12 Feb 2024',
-        time: '10:30 AM',
-        status: 'Completed',
-        weight: '15.5 kg',
-        points: '+45 Points'
-    },
-    {
-        id: 'ORD-88271',
-        type: 'E-Waste Collection',
-        date: '28 Jan 2024',
-        time: '02:15 PM',
-        status: 'Completed',
-        weight: '5.2 kg',
-        points: '+20 Points'
-    },
-    {
-        id: 'ORD-77160',
-        type: 'Scrap/Recyclable Waste',
-        date: '10 Jan 2024',
-        time: '11:00 AM',
-        status: 'Cancelled',
-        weight: '-',
-        points: '0 Points'
-    },
-    {
-        id: 'ORD-66059',
-        type: 'Bulk Waste',
-        date: '15 Dec 2023',
-        time: '09:45 AM',
-        status: 'Completed',
-        weight: '45.0 kg',
-        points: '+150 Points'
-    }
-];
-
-const HistoryContent = () => {
+const HistoryContent = ({ orders }: { orders: Order[] }) => {
     const { isDark, colors } = React.useContext(ThemeContext);
+    
+    // Filter to only show completed/cancelled orders if we want
+    // For now, let's just show 'Collected' ones or empty if none
+    const historyData = orders.filter(o => o.status === 'Collected' || o.status === 'Cancelled');
+    
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header / Summary Area */}
@@ -604,14 +705,14 @@ const HistoryContent = () => {
             <View style={styles.contentSection}>
                 <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Recent Orders</Text>
 
-                {MOCK_HISTORY_DATA.length === 0 ? (
+                {historyData.length === 0 ? (
                     <View style={styles.emptyStateContainer}>
                         <MaterialCommunityIcons name="history" size={80} color={colors.navIcon} style={{ marginBottom: 16 }} />
                         <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No History found</Text>
                         <Text style={[styles.emptyStateDescription, { color: colors.textSecondary }]}>You don't have any past orders yet.</Text>
                     </View>
                 ) : (
-                    MOCK_HISTORY_DATA.map((item) => (
+                    historyData.map((item) => (
                         <View key={item.id} style={styles.historyCard}>
                             <View style={styles.historyCardHeader}>
                                 <View>
@@ -632,17 +733,6 @@ const HistoryContent = () => {
                                     <MaterialCommunityIcons name="calendar-clock" size={16} color="#7b8a9e" />
                                     <Text style={styles.historyDetailText}>{item.date}, {item.time}</Text>
                                 </View>
-
-                                <View style={styles.historyMetricsRow}>
-                                    <View style={styles.historyMetricGroup}>
-                                        <MaterialCommunityIcons name="weight" size={16} color="#00c853" />
-                                        <Text style={styles.historyMetricText}>{item.weight}</Text>
-                                    </View>
-                                    <View style={styles.historyMetricGroup}>
-                                        <MaterialCommunityIcons name="leaf-circle" size={16} color="#00c853" />
-                                        <Text style={styles.historyMetricText}>{item.points}</Text>
-                                    </View>
-                                </View>
                             </View>
                         </View>
                     ))
@@ -657,6 +747,7 @@ const ProfileContent = () => {
     const { isDark, toggleTheme, colors } = React.useContext(ThemeContext);
     const router = useRouter();
     const [userProfile, setUserProfile] = useState<any>(null);
+    const [qrModalVisible, setQrModalVisible] = useState(false);
 
     React.useEffect(() => {
         const fetchUserData = async () => {
@@ -707,6 +798,10 @@ const ProfileContent = () => {
                 <View style={styles.profileRoleTag}>
                     <Text style={styles.profileRoleText}>{userProfile?.role ? userProfile.role.charAt(0).toUpperCase() + userProfile.role.slice(1) : 'Resident'}</Text>
                 </View>
+                <TouchableOpacity style={{ marginTop: 16, backgroundColor: 'rgba(0,200,83,0.2)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: '#00c853', flexDirection: 'row', alignItems: 'center' }} onPress={() => setQrModalVisible(true)}>
+                    <MaterialCommunityIcons name="qrcode" size={20} color="#00c853" style={{ marginRight: 8 }} />
+                    <Text style={{ color: '#00c853', fontWeight: '700' }}>Show My QR Code</Text>
+                </TouchableOpacity>
             </LinearGradient>
 
             <View style={styles.contentSection}>
@@ -808,6 +903,25 @@ const ProfileContent = () => {
 
             </View>
             <View style={{ height: 100 }} />
+
+            {/* QR Modal */}
+            <Modal visible={qrModalVisible} transparent animationType="fade">
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 24, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 20 }}>Your Identity</Text>
+                        <QRCode
+                            value={userProfile?.email || 'Unknown User'}
+                            size={200}
+                            color="#111"
+                            backgroundColor="#fff"
+                        />
+                        <Text style={{ color: '#555', marginTop: 16, textAlign: 'center' }}>Scan this code when your{'\n'}waste is collected.</Text>
+                        <TouchableOpacity style={{ marginTop: 24, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: '#00c853', borderRadius: 24 }} onPress={() => setQrModalVisible(false)}>
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Close</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </ScrollView>
     );
 };

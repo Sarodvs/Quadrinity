@@ -23,13 +23,16 @@ import {
 import authService from './services/authService';
 import { ThemeContext } from './context/ThemeContext';
 import { auth, db } from './firebaseConfig';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { Calendar } from 'react-native-calendars';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
 const { width } = Dimensions.get('window');
 
 const OFFICIAL_NAV_ITEMS = [
     { id: 'home', label: 'Home', icon: 'home-outline', iconActive: 'home' },
     { id: 'schedule', label: 'Schedule', icon: 'clipboard-list-outline', iconActive: 'clipboard-list' },
+    { id: 'availability', label: 'Availability', icon: 'calendar-clock-outline', iconActive: 'calendar-clock' },
     { id: 'payment', label: 'Payment', icon: 'bank-outline', iconActive: 'bank' },
     { id: 'settings', label: 'Settings', icon: 'cog-outline', iconActive: 'cog' },
 ];
@@ -52,6 +55,7 @@ export default function OfficialDashboardScreen() {
             >
                 {activeTab === 'home' && <OfficialHomeContent />}
                 {activeTab === 'schedule' && <OfficialScheduleContent />}
+                {activeTab === 'availability' && <OfficialAvailabilityContent />}
                 {activeTab === 'payment' && <OfficialPaymentContent />}
                 {activeTab === 'settings' && <OfficialSettingsContent />}
 
@@ -94,9 +98,40 @@ export default function OfficialDashboardScreen() {
 const OfficialHomeContent = () => {
     const { colors, isDark } = React.useContext(ThemeContext);
     const [isOnline, setIsOnline] = useState(false);
+    
+    const [scanned, setScanned] = useState(false);
+    const [isScannerOpen, setIsScannerOpen] = useState(false);
+    const [permission, requestPermission] = useCameraPermissions();
+    const [scannedUser, setScannedUser] = useState<any>(null);
+    const [isUserModalVisible, setIsUserModalVisible] = useState(false);
 
-    const handleScanQR = () => {
-        Alert.alert("QR Scanner", "Opening camera to scan house QR...");
+    const handleScanQR = async () => {
+        if (!permission?.granted) {
+            const result = await requestPermission();
+            if (!result.granted) {
+                Alert.alert("Permission required", "Camera permission is needed to scan QR codes.");
+                return;
+            }
+        }
+        setScanned(false);
+        setIsScannerOpen(true);
+    };
+
+    const handleBarCodeScanned = async ({ type, data }: { type: string, data: string }) => {
+        setScanned(true);
+        setIsScannerOpen(false);
+        try {
+            const userEmail = data.toLowerCase();
+            const userDoc = await getDoc(doc(db, 'users', userEmail));
+            if (userDoc.exists()) {
+                setScannedUser(userDoc.data());
+                setIsUserModalVisible(true);
+            } else {
+                Alert.alert("Error", "Resident not found!");
+            }
+        } catch (error) {
+            Alert.alert("Error", "Failed to fetch resident details.");
+        }
     };
 
     const handleNavigation = () => {
@@ -186,6 +221,156 @@ const OfficialHomeContent = () => {
 
             </View>
             <View style={{ height: 100 }} />
+
+            {/* QR Scanner Modal */}
+            <Modal visible={isScannerOpen} animationType="slide" onRequestClose={() => setIsScannerOpen(false)}>
+                <View style={{ flex: 1, backgroundColor: '#000' }}>
+                    <CameraView
+                        style={{ flex: 1 }}
+                        facing="back"
+                        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+                    >
+                        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+                            <Text style={{ color: '#fff', fontSize: 18, marginBottom: 20 }}>Align QR Code in the frame</Text>
+                            <View style={{ width: 250, height: 250, borderWidth: 2, borderColor: '#00c853', backgroundColor: 'transparent' }} />
+                        </View>
+                        <TouchableOpacity 
+                            style={{ position: 'absolute', bottom: 50, alignSelf: 'center', backgroundColor: '#e53935', padding: 16, borderRadius: 50 }}
+                            onPress={() => setIsScannerOpen(false)}
+                        >
+                            <MaterialCommunityIcons name="close" size={30} color="#fff" />
+                        </TouchableOpacity>
+                    </CameraView>
+                </View>
+            </Modal>
+
+            {/* Resident Details Modal */}
+            <Modal visible={isUserModalVisible} transparent animationType="fade" onRequestClose={() => setIsUserModalVisible(false)}>
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { backgroundColor: isDark ? '#0f1a26' : colors.cardBg }]}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Resident Details</Text>
+                            <TouchableOpacity onPress={() => setIsUserModalVisible(false)}>
+                                <MaterialCommunityIcons name="close-circle" size={28} color="#7b8a9e" />
+                            </TouchableOpacity>
+                        </View>
+                        {scannedUser && (
+                            <View style={{ marginTop: 10, gap: 10 }}>
+                                <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700' }}>{scannedUser.name}</Text>
+                                <Text style={{ color: colors.textSecondary, fontSize: 16 }}>{scannedUser.email}</Text>
+                                <View style={{ height: 1, backgroundColor: '#263345', marginVertical: 10 }} />
+                                <Text style={{ color: colors.text, fontSize: 16 }}><Text style={{ fontWeight: 'bold' }}>House:</Text> {scannedUser.houseNo || 'N/A'}</Text>
+                                <Text style={{ color: colors.text, fontSize: 16 }}><Text style={{ fontWeight: 'bold' }}>Address:</Text> {scannedUser.address || 'N/A'}</Text>
+                                <Text style={{ color: colors.text, fontSize: 16 }}><Text style={{ fontWeight: 'bold' }}>Phone:</Text> {scannedUser.phone || 'N/A'}</Text>
+                            </View>
+                        )}
+                    </View>
+                </View>
+            </Modal>
+
+        </ScrollView>
+    );
+};
+
+// -----------------------------------------------------
+// OfficialAvailabilityContent
+// -----------------------------------------------------
+const OfficialAvailabilityContent = () => {
+    const { colors, isDark } = React.useContext(ThemeContext);
+    const [markedDates, setMarkedDates] = useState<any>({});
+    
+    useEffect(() => {
+        const fetchAvailability = async () => {
+            try {
+                const docRef = doc(db, 'system', 'collection_schedule');
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const dates = data.availableDates || [];
+                    const newMarked: any = {};
+                    dates.forEach((d: string) => {
+                        newMarked[d] = { selected: true, marked: true, selectedColor: '#00c853' };
+                    });
+                    setMarkedDates(newMarked);
+                }
+            } catch (err) {
+                console.log(err);
+            }
+        };
+        fetchAvailability();
+    }, []);
+
+    const onDayPress = async (day: any) => {
+        const dateStr = day.dateString;
+        const newMarked = { ...markedDates };
+        
+        let availableDates: string[] = Object.keys(newMarked).filter(k => newMarked[k]?.selected);
+        
+        if (newMarked[dateStr]?.selected) {
+            delete newMarked[dateStr];
+            availableDates = availableDates.filter(d => d !== dateStr);
+        } else {
+            newMarked[dateStr] = { selected: true, marked: true, selectedColor: '#00c853' };
+            availableDates.push(dateStr);
+        }
+        
+        setMarkedDates(newMarked);
+
+        try {
+            await setDoc(doc(db, 'system', 'collection_schedule'), {
+                availableDates
+            }, { merge: true });
+        } catch (error) {
+            console.error("Failed to save availability", error);
+        }
+    };
+
+    return (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <LinearGradient
+                colors={isDark ? ['#0a3f18', '#0d2f16', '#0b1a12'] : [colors.headerGrad1, colors.headerGrad2, colors.headerGrad3]}
+                locations={[0, 0.5, 1]}
+                style={[styles.header, { paddingBottom: 30, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
+            >
+                <View style={styles.profileAvatarContainer}>
+                    <View style={styles.profileAvatar}>
+                        <MaterialCommunityIcons name="calendar-clock" size={50} color="#00c853" />
+                    </View>
+                </View>
+                <Text style={[styles.profileName, { color: isDark ? '#ffffff' : colors.text }]}>Availability</Text>
+                <Text style={[styles.profileEmail, { color: isDark ? '#a0aec0' : colors.textSecondary, textAlign: 'center', paddingHorizontal: 20 }]}>
+                    Mark the days you will be available for pickup.
+                </Text>
+            </LinearGradient>
+
+            <View style={styles.contentSection}>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary, marginBottom: 20 }]}>Select Available Dates</Text>
+                <View style={{ borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#263345' }}>
+                    <Calendar
+                        onDayPress={onDayPress}
+                        markedDates={markedDates}
+                        theme={{
+                            backgroundColor: isDark ? '#0f1a26' : colors.cardBg,
+                            calendarBackground: isDark ? '#0f1a26' : colors.cardBg,
+                            textSectionTitleColor: '#b6c1cd',
+                            selectedDayBackgroundColor: '#00c853',
+                            selectedDayTextColor: '#ffffff',
+                            todayTextColor: '#00c853',
+                            dayTextColor: isDark ? '#d9e1e8' : '#2d4150',
+                            textDisabledColor: isDark ? '#3e5068' : '#d9e1e8',
+                            dotColor: '#00c853',
+                            selectedDotColor: '#ffffff',
+                            arrowColor: '#00c853',
+                            monthTextColor: isDark ? '#ffffff' : '#2d4150',
+                            textDayFontWeight: '500',
+                            textMonthFontWeight: 'bold',
+                            textDayHeaderFontWeight: '600'
+                        }}
+                        minDate={new Date().toISOString().split('T')[0]}
+                    />
+                </View>
+            </View>
+            <View style={{ height: 100 }} />
         </ScrollView>
     );
 };
@@ -199,14 +384,35 @@ const OfficialScheduleContent = () => {
     const [selectedCollection, setSelectedCollection] = useState<any>(null);
     const [quantity, setQuantity] = useState('');
     const [scannedWasteType, setScannedWasteType] = useState('Plastic');
+    const [schedule, setSchedule] = useState<any[]>([]);
 
     const wasteTypes = ['Plastic', 'E-waste', 'Organic', 'General', 'Hazardous'];
 
-    const mockSchedule = [
-        { id: '1', residentName: 'Rahul Kumar', address: 'Sector 4, Block A, House 12', wasteType: 'Plastic', status: 'Pending', time: '09:00 AM' },
-        { id: '2', residentName: 'Priya Singh', address: 'Sector 4, Block B, House 45', wasteType: 'E-waste', status: 'Pending', time: '10:00 AM' },
-        { id: '3', residentName: 'Amit Patel', address: 'Sector 5, Block C, House 8', wasteType: 'Organic', status: 'Collected', time: '11:30 AM' },
-    ];
+    const fetchSchedule = async () => {
+        try {
+            const q = query(collection(db, 'orders'), where('status', '==', 'Scheduled'));
+            const querySnapshot = await getDocs(q);
+            const fetchedSchedule: any[] = [];
+            querySnapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                fetchedSchedule.push({
+                    id: docSnap.id,
+                    residentName: data.residentName || 'Resident',
+                    address: data.address || '',
+                    wasteType: data.type || 'Plastic',
+                    status: data.status,
+                    time: data.time || '',
+                });
+            });
+            setSchedule(fetchedSchedule);
+        } catch (error) {
+            console.error("Error fetching schedule:", error);
+        }
+    };
+
+    useEffect(() => {
+        fetchSchedule();
+    }, []);
 
     const getWasteIcon = (type: string) => {
         switch (type) {
@@ -224,9 +430,21 @@ const OfficialScheduleContent = () => {
         setVerificationModalVisible(true);
     };
 
-    const handleCompleteCollection = () => {
-        setVerificationModalVisible(false);
-        Alert.alert("Success", "Collection completed and payment requested.");
+    const handleCompleteCollection = async () => {
+        if (!selectedCollection) return;
+        try {
+            await updateDoc(doc(db, 'orders', selectedCollection.id), {
+                status: 'Collected',
+                collectedQuantity: quantity,
+                collectedWasteType: scannedWasteType
+            });
+            setVerificationModalVisible(false);
+            Alert.alert("Success", "Collection completed and payment requested.");
+            fetchSchedule();
+        } catch (error) {
+            console.error("Error updating order:", error);
+            Alert.alert("Error", "Failed to complete collection.");
+        }
     };
 
     const handleNavigation = () => {
@@ -248,7 +466,9 @@ const OfficialScheduleContent = () => {
                 <View style={styles.contentSection}>
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Collection Schedule</Text>
                     <View style={styles.scheduleListContainer}>
-                        {mockSchedule.map((item) => (
+                        {schedule.length === 0 ? (
+                            <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 30 }}>No pending collections for today.</Text>
+                        ) : schedule.map((item) => (
                             <View key={item.id} style={[styles.scheduleCard, { borderColor: colors.cardBorder, backgroundColor: isDark ? '#0f1a26' : colors.cardBg }]}>
                                 <View style={styles.scheduleCardHeader}>
                                     <View>

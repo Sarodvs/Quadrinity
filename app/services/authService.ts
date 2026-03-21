@@ -93,6 +93,7 @@ const authService = {
             }
 
             const data = otpDoc.data();
+            
             if (new Date().getTime() > data.expiresAt) {
                 return { success: false, error: 'OTP has expired. Please request a new one.' };
             }
