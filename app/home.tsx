@@ -1,19 +1,31 @@
+import { auth as firebaseAuth } from '@/app/firebase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useState } from 'react';
+import { useRouter } from 'expo-router';
+import { updatePassword } from 'firebase/auth';
+import { doc, getDoc, getFirestore, updateDoc } from 'firebase/firestore';
+import React, { useEffect, useState } from 'react';
 import {
+    ActivityIndicator,
     Alert,
     Dimensions,
     Image,
+    Keyboard,
+    KeyboardAvoidingView,
     Linking,
+    Modal,
+    Platform,
     SafeAreaView,
     ScrollView,
     StatusBar,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
+    TouchableWithoutFeedback,
     View
 } from 'react-native';
+import { useAuth } from './context/AuthContext';
 
 const { width } = Dimensions.get('window');
 
@@ -33,9 +45,29 @@ interface Order {
     status: string;
 }
 
+interface ResidentProfile {
+    name: string;
+    email: string;
+    mobileNo?: string;
+    houseNo: string;
+    address: string;
+}
+
 export default function HomeScreen() {
     const [activeTab, setActiveTab] = useState('home');
     const [orders, setOrders] = useState<Order[]>([]);
+    const [profile, setProfile] = useState<ResidentProfile | null>(null);
+    const [isProfileLoading, setIsProfileLoading] = useState(true);
+    const { currentUser, logout } = useAuth();
+    const router = useRouter();
+
+    // Profile Modal States
+    const [isEditProfileModalVisible, setIsEditProfileModalVisible] = useState(false);
+    const [editForm, setEditForm] = useState({ mobileNo: '', houseNo: '', address: '' });
+    const [isChangePasswordModalVisible, setIsChangePasswordModalVisible] = useState(false);
+    const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' });
+    const [isLogoutConfirmModalVisible, setIsLogoutConfirmModalVisible] = useState(false);
+    const [isModifying, setIsModifying] = useState(false);
 
     // Booking State
     const [isBooking, setIsBooking] = useState(false);
@@ -84,6 +116,130 @@ export default function HomeScreen() {
         if (isBooking) setIsBooking(false);
     };
 
+    useEffect(() => {
+        const loadProfile = async () => {
+            const userId = currentUser?.id || firebaseAuth.currentUser?.uid;
+            if (!userId) {
+                setProfile(null);
+                setIsProfileLoading(false);
+                return;
+            }
+
+            setIsProfileLoading(true);
+            try {
+                const firestore = getFirestore();
+                const profileRef = doc(firestore, 'users', userId);
+                const profileSnap = await getDoc(profileRef);
+
+                const firestoreData = profileSnap.exists() ? (profileSnap.data() as Partial<ResidentProfile>) : {};
+                const email =
+                    firestoreData.email ||
+                    currentUser?.email ||
+                    firebaseAuth.currentUser?.email ||
+                    '';
+
+                setProfile({
+                    name: firestoreData.name || currentUser?.displayName || email.split('@')[0] || 'Resident',
+                    email,
+                    mobileNo: firestoreData.mobileNo || '-',
+                    houseNo: firestoreData.houseNo || '-',
+                    address: firestoreData.address || '-',
+                });
+            } catch {
+                Alert.alert('Error', 'Failed to load profile details from Firebase.');
+            } finally {
+                setIsProfileLoading(false);
+            }
+        };
+
+        loadProfile();
+    }, [currentUser]);
+
+    const handleLogout = async () => {
+        try {
+            await logout();
+            router.replace('/login');
+        } catch {
+            Alert.alert('Error', 'Unable to logout right now. Please try again.');
+        }
+    };
+
+    const openEditProfileModal = () => {
+        if (profile) {
+            setEditForm({
+                mobileNo: profile.mobileNo || '',
+                houseNo: profile.houseNo || '',
+                address: profile.address || '',
+            });
+            setIsEditProfileModalVisible(true);
+        }
+    };
+
+    const closeEditProfileModal = () => {
+        setIsEditProfileModalVisible(false);
+    };
+
+    const handleSaveProfile = async () => {
+        const userId = currentUser?.id || firebaseAuth.currentUser?.uid;
+        if (!userId || !profile) return;
+
+        setIsModifying(true);
+        try {
+            const firestore = getFirestore();
+            const userRef = doc(firestore, 'users', userId);
+            await updateDoc(userRef, {
+                mobileNo: editForm.mobileNo,
+                houseNo: editForm.houseNo,
+                address: editForm.address,
+            });
+            setProfile({
+                ...profile,
+                mobileNo: editForm.mobileNo,
+                houseNo: editForm.houseNo,
+                address: editForm.address,
+            });
+            closeEditProfileModal();
+            Alert.alert('Success', 'Profile updated successfully');
+        } catch (error: any) {
+            Alert.alert('Error', error.message || 'Failed to update profile');
+        } finally {
+            setIsModifying(false);
+        }
+    };
+
+    const handleChangePassword = async () => {
+        if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+            Alert.alert('Error', 'Passwords do not match');
+            return;
+        }
+        if (passwordForm.newPassword.length < 6) {
+            Alert.alert('Error', 'Password must be at least 6 characters');
+            return;
+        }
+
+        setIsModifying(true);
+        try {
+            const user = firebaseAuth.currentUser;
+            if (!user) {
+                Alert.alert('Error', 'User not authenticated');
+                return;
+            }
+            await updatePassword(user, passwordForm.newPassword);
+            setPasswordForm({ newPassword: '', confirmPassword: '' });
+            setIsChangePasswordModalVisible(false);
+            Alert.alert('Success', 'Password changed successfully');
+        } catch (error: any) {
+            Alert.alert('Error', error.message || 'Failed to change password');
+        } finally {
+            setIsModifying(false);
+        }
+    };
+
+    const confirmLogout = async () => {
+        setIsLogoutConfirmModalVisible(false);
+        await handleLogout();
+    };
+
     return (
         <SafeAreaView style={styles.safeArea}>
             <StatusBar barStyle="light-content" />
@@ -112,7 +268,28 @@ export default function HomeScreen() {
 
                 {/* Additional Tabs */}
                 {activeTab === 'history' && <HistoryContent />}
-                {activeTab === 'profile' && <ProfileContent />}
+                {activeTab === 'profile' && (
+                    <ProfileContent
+                        profile={profile}
+                        loading={isProfileLoading}
+                        onLogout={() => setIsLogoutConfirmModalVisible(true)}
+                        isEditProfileModalVisible={isEditProfileModalVisible}
+                        closeEditProfileModal={closeEditProfileModal}
+                        editForm={editForm}
+                        setEditForm={setEditForm}
+                        handleSaveProfile={handleSaveProfile}
+                        isChangePasswordModalVisible={isChangePasswordModalVisible}
+                        setIsChangePasswordModalVisible={setIsChangePasswordModalVisible}
+                        passwordForm={passwordForm}
+                        setPasswordForm={setPasswordForm}
+                        handleChangePassword={handleChangePassword}
+                        openEditProfileModal={openEditProfileModal}
+                        isModifying={isModifying}
+                        isLogoutConfirmModalVisible={isLogoutConfirmModalVisible}
+                        setIsLogoutConfirmModalVisible={setIsLogoutConfirmModalVisible}
+                        confirmLogout={confirmLogout}
+                    />
+                )}
 
                 {/* Bottom Navigation */}
                 <View style={styles.bottomNav}>
@@ -249,6 +426,31 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                     </LinearGradient>
                 </TouchableOpacity>
 
+                {/* Payments Section */}
+                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Payments & Bills</Text>
+                <TouchableOpacity activeOpacity={0.9} onPress={handleUPIPayment}>
+                    <LinearGradient
+                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.card}
+                    >
+                        <View style={styles.iconBox}>
+                            <LinearGradient
+                                colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
+                                style={styles.iconGradient}
+                            >
+                                <MaterialCommunityIcons name="credit-card-outline" size={28} color="#00c853" />
+                            </LinearGradient>
+                        </View>
+                        <View style={styles.cardContent}>
+                            <Text style={styles.cardTitle}>Make a Payment</Text>
+                            <Text style={styles.cardSubtitle}>Pay securely via UPI</Text>
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
+                    </LinearGradient>
+                </TouchableOpacity>
+
                 {/* Your Contribution Section */}
                 <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 20 }]}>Your Contribution</Text>
                 <View style={styles.contributionContainer}>
@@ -269,30 +471,7 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                     </View>
                 </View>
 
-                {/* Payments Section */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Payments & Bills</Text>
-                <TouchableOpacity activeOpacity={0.9} onPress={handleUPIPayment}>
-                    <LinearGradient
-                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.card}
-                    >
-                        <View style={styles.iconBox}>
-                            <LinearGradient
-                                colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
-                                style={styles.iconGradient}
-                            >
-                                <MaterialCommunityIcons name="credit-card-outline" size={28} color="#00c853" />
-                            </LinearGradient>
-                        </View>
-                        <View style={styles.cardContent}>
-                            <Text style={styles.cardTitle}>Make a Payment</Text>
-                            <Text style={styles.cardSubtitle}>Pay securely via UPI (GPay, PhonePe, etc.)</Text>
-                        </View>
-                        <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
-                    </LinearGradient>
-                </TouchableOpacity>
+                
 
             </View>
         </ScrollView>
@@ -507,7 +686,7 @@ const OrdersContent = ({ orders, onSchedulePickup }: { orders: Order[], onSchedu
 
 const PlaceholderContent = ({ title }: { title: string }) => (
     <View style={styles.placeholderContainer}>
-        <Text style={styles.placeholderText}>{title} Coming Soon</Text>
+        <Text style={styles.placeholderTitle}>{title} Coming Soon</Text>
     </View>
 );
 
@@ -627,119 +806,351 @@ const HistoryContent = () => {
     );
 };
 
-const ProfileContent = () => {
+const ProfileContent = ({
+    profile,
+    loading,
+    onLogout,
+    isEditProfileModalVisible,
+    closeEditProfileModal,
+    editForm,
+    setEditForm,
+    handleSaveProfile,
+    isChangePasswordModalVisible,
+    setIsChangePasswordModalVisible,
+    passwordForm,
+    setPasswordForm,
+    handleChangePassword,
+    openEditProfileModal,
+    isModifying,
+    isLogoutConfirmModalVisible,
+    setIsLogoutConfirmModalVisible,
+    confirmLogout,
+}: {
+    profile: ResidentProfile | null;
+    loading: boolean;
+    onLogout: () => void;
+    isEditProfileModalVisible: boolean;
+    closeEditProfileModal: () => void;
+    editForm: { mobileNo: string; houseNo: string; address: string };
+    setEditForm: (form: { mobileNo: string; houseNo: string; address: string }) => void;
+    handleSaveProfile: () => void;
+    isChangePasswordModalVisible: boolean;
+    setIsChangePasswordModalVisible: (visible: boolean) => void;
+    passwordForm: { newPassword: string; confirmPassword: string };
+    setPasswordForm: (form: { newPassword: string; confirmPassword: string }) => void;
+    handleChangePassword: () => void;
+    openEditProfileModal: () => void;
+    isModifying: boolean;
+    isLogoutConfirmModalVisible: boolean;
+    setIsLogoutConfirmModalVisible: (visible: boolean) => void;
+    confirmLogout: () => void;
+}) => {
+    const displayName = profile?.name || 'Resident';
+    const displayEmail = profile?.email || 'No email available';
+    const displayMobileNo = profile?.mobileNo || '-';
+    const displayHouseNo = profile?.houseNo || '-';
+    const displayAddress = profile?.address || '-';
+
     return (
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {/* Header Area */}
-            <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
-                locations={[0, 0.5, 1]}
-                style={[styles.header, { paddingBottom: 30, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
+        <>
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                {/* Header Area */}
+                <LinearGradient
+                    colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                    locations={[0, 0.5, 1]}
+                    style={[styles.header, { paddingBottom: 30, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
+                >
+                    <View style={styles.profileAvatarContainer}>
+                        <View style={styles.profileAvatar}>
+                            <MaterialCommunityIcons name="account" size={50} color="#00c853" />
+                        </View>
+                        <View style={styles.profileBadge}>
+                            <MaterialCommunityIcons name="check-decagram" size={20} color="#00c853" />
+                        </View>
+                    </View>
+                    <Text style={styles.profileName}>{displayName}</Text>
+                    <Text style={styles.profileEmail}>{displayEmail}</Text>
+
+                    <View style={styles.profileRoleTag}>
+                        <Text style={styles.profileRoleText}>Resident</Text>
+                    </View>
+                </LinearGradient>
+
+                <View style={styles.contentSection}>
+                    {/* Stats Section */}
+                    <Text style={styles.sectionTitle}>Your Impact</Text>
+                    <View style={styles.statsContainer}>
+                        <View style={styles.statBox}>
+                            <Text style={styles.statValue}>45</Text>
+                            <Text style={styles.statLabel}>kg Collected</Text>
+                        </View>
+                        <View style={styles.statDivider} />
+                        <View style={styles.statBox}>
+                            <Text style={styles.statValue}>12</Text>
+                            <Text style={styles.statLabel}>Pickups</Text>
+                        </View>
+                        <View style={styles.statDivider} />
+                        <View style={styles.statBox}>
+                            <Text style={styles.statValue}>120</Text>
+                            <Text style={styles.statLabel}>Eco-Points</Text>
+                        </View>
+                    </View>
+
+                    {/* Contact & Location */}
+                    <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Personal Details</Text>
+                    <View style={styles.detailsCard}>
+                        {loading && (
+                            <View style={styles.profileLoadingRow}>
+                                <ActivityIndicator size="small" color="#00c853" />
+                                <Text style={styles.profileLoadingText}>Loading profile from Firebase...</Text>
+                            </View>
+                        )}
+                        <View style={styles.detailRow}>
+                            <View style={styles.detailIconBox}>
+                                <MaterialCommunityIcons name="home-outline" size={20} color="#00c853" />
+                            </View>
+                            <View style={styles.detailTextContainer}>
+                                <Text style={styles.detailLabel}>House / Flat No.</Text>
+                                <Text style={styles.detailValue}>{displayHouseNo}</Text>
+                            </View>
+                        </View>
+                        <View style={styles.detailDivider} />
+                        <View style={styles.detailRow}>
+                            <View style={styles.detailIconBox}>
+                                <MaterialCommunityIcons name="map-marker-outline" size={20} color="#00c853" />
+                            </View>
+                            <View style={styles.detailTextContainer}>
+                                <Text style={styles.detailLabel}>Address</Text>
+                                <Text style={styles.detailValue}>{displayAddress}</Text>
+                            </View>
+                        </View>
+                        <View style={styles.detailDivider} />
+                        <View style={styles.detailRow}>
+                            <View style={styles.detailIconBox}>
+                                <MaterialCommunityIcons name="phone-outline" size={20} color="#00c853" />
+                            </View>
+                            <View style={styles.detailTextContainer}>
+                                <Text style={styles.detailLabel}>Mobile Number</Text>
+                                <Text style={styles.detailValue}>{displayMobileNo}</Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* Actions Menu */}
+                    <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Settings</Text>
+                    <View style={styles.menuContainer}>
+                        <TouchableOpacity style={styles.menuItem} activeOpacity={0.7} onPress={openEditProfileModal}>
+                            <MaterialCommunityIcons name="account-edit-outline" size={24} color="#7b8a9e" />
+                            <Text style={styles.menuItemText}>Edit Profile</Text>
+                            <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.menuItem} activeOpacity={0.7} onPress={() => setIsChangePasswordModalVisible(true)}>
+                            <MaterialCommunityIcons name="lock-outline" size={24} color="#7b8a9e" />
+                            <Text style={styles.menuItemText}>Change Password</Text>
+                            <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                            <MaterialCommunityIcons name="help-circle-outline" size={24} color="#7b8a9e" />
+                            <Text style={styles.menuItemText}>Help & Support</Text>
+                            <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                            <MaterialCommunityIcons name="file-document-outline" size={24} color="#7b8a9e" />
+                            <Text style={styles.menuItemText}>Terms & Privacy Policy</Text>
+                            <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* Logout Button */}
+                    <TouchableOpacity style={styles.logoutButton} activeOpacity={0.8} onPress={onLogout}>
+                        <MaterialCommunityIcons name="logout" size={20} color="#e53935" />
+                        <Text style={styles.logoutButtonText}>Log Out</Text>
+                    </TouchableOpacity>
+
+                </View>
+                <View style={{ height: 100 }} />
+            </ScrollView>
+
+            {/* Edit Profile Modal */}
+            <Modal
+                visible={isEditProfileModalVisible}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={closeEditProfileModal}
             >
-                <View style={styles.profileAvatarContainer}>
-                    <View style={styles.profileAvatar}>
-                        <MaterialCommunityIcons name="account" size={50} color="#00c853" />
-                    </View>
-                    <View style={styles.profileBadge}>
-                        <MaterialCommunityIcons name="check-decagram" size={20} color="#00c853" />
-                    </View>
-                </View>
-                <Text style={styles.profileName}>John Doe</Text>
-                <Text style={styles.profileEmail}>john.doe@example.com</Text>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === "ios" ? "padding" : "height"}
+                    style={styles.modalOverlay}
+                >
+                    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                        <View style={styles.modalContainer}>
+                            <View style={styles.modalContent}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>Edit Profile</Text>
+                                    <TouchableOpacity onPress={closeEditProfileModal}>
+                                        <MaterialCommunityIcons name="close" size={24} color="#d0d8e4" />
+                                    </TouchableOpacity>
+                                </View>
 
-                <View style={styles.profileRoleTag}>
-                    <Text style={styles.profileRoleText}>Resident</Text>
-                </View>
-            </LinearGradient>
+                                <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                                    <View style={styles.modalInputGroup}>
+                                        <Text style={styles.modalLabel}>Mobile Number</Text>
+                                        <TextInput
+                                            style={styles.modalInput}
+                                            placeholder="Enter mobile number"
+                                            placeholderTextColor="#7A8A99"
+                                            value={editForm.mobileNo}
+                                            onChangeText={(text) => setEditForm({ ...editForm, mobileNo: text })}
+                                            keyboardType="phone-pad"
+                                        />
+                                    </View>
 
-            <View style={styles.contentSection}>
-                {/* Stats Section */}
-                <Text style={styles.sectionTitle}>Your Impact</Text>
-                <View style={styles.statsContainer}>
-                    <View style={styles.statBox}>
-                        <Text style={styles.statValue}>45</Text>
-                        <Text style={styles.statLabel}>kg Collected</Text>
-                    </View>
-                    <View style={styles.statDivider} />
-                    <View style={styles.statBox}>
-                        <Text style={styles.statValue}>12</Text>
-                        <Text style={styles.statLabel}>Pickups</Text>
-                    </View>
-                    <View style={styles.statDivider} />
-                    <View style={styles.statBox}>
-                        <Text style={styles.statValue}>120</Text>
-                        <Text style={styles.statLabel}>Eco-Points</Text>
-                    </View>
-                </View>
+                                    <View style={styles.modalInputGroup}>
+                                        <Text style={styles.modalLabel}>House Number</Text>
+                                        <TextInput
+                                            style={styles.modalInput}
+                                            placeholder="Enter house number"
+                                            placeholderTextColor="#7A8A99"
+                                            value={editForm.houseNo}
+                                            onChangeText={(text) => setEditForm({ ...editForm, houseNo: text })}
+                                        />
+                                    </View>
 
-                {/* Contact & Location */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Personal Details</Text>
-                <View style={styles.detailsCard}>
-                    <View style={styles.detailRow}>
-                        <View style={styles.detailIconBox}>
-                            <MaterialCommunityIcons name="home-outline" size={20} color="#00c853" />
-                        </View>
-                        <View style={styles.detailTextContainer}>
-                            <Text style={styles.detailLabel}>House / Flat No.</Text>
-                            <Text style={styles.detailValue}>Apt 402, Green Valley</Text>
-                        </View>
-                    </View>
-                    <View style={styles.detailDivider} />
-                    <View style={styles.detailRow}>
-                        <View style={styles.detailIconBox}>
-                            <MaterialCommunityIcons name="map-marker-outline" size={20} color="#00c853" />
-                        </View>
-                        <View style={styles.detailTextContainer}>
-                            <Text style={styles.detailLabel}>Address</Text>
-                            <Text style={styles.detailValue}>123 Eco Street, Trivandrum, Kerala 695001</Text>
-                        </View>
-                    </View>
-                    <View style={styles.detailDivider} />
-                    <View style={styles.detailRow}>
-                        <View style={styles.detailIconBox}>
-                            <MaterialCommunityIcons name="phone-outline" size={20} color="#00c853" />
-                        </View>
-                        <View style={styles.detailTextContainer}>
-                            <Text style={styles.detailLabel}>Phone Number</Text>
-                            <Text style={styles.detailValue}>+91 98765 43210</Text>
-                        </View>
-                    </View>
-                </View>
+                                    <View style={styles.modalInputGroup}>
+                                        <Text style={styles.modalLabel}>Address</Text>
+                                        <TextInput
+                                            style={[styles.modalInput, { height: 100, textAlignVertical: 'top' }]}
+                                            placeholder="Enter address"
+                                            placeholderTextColor="#7A8A99"
+                                            value={editForm.address}
+                                            onChangeText={(text) => setEditForm({ ...editForm, address: text })}
+                                            multiline
+                                        />
+                                    </View>
 
-                {/* Actions Menu */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Settings</Text>
-                <View style={styles.menuContainer}>
-                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
-                        <MaterialCommunityIcons name="account-edit-outline" size={24} color="#7b8a9e" />
-                        <Text style={styles.menuItemText}>Edit Profile</Text>
-                        <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
-                        <MaterialCommunityIcons name="lock-outline" size={24} color="#7b8a9e" />
-                        <Text style={styles.menuItemText}>Change Password</Text>
-                        <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
-                        <MaterialCommunityIcons name="help-circle-outline" size={24} color="#7b8a9e" />
-                        <Text style={styles.menuItemText}>Help & Support</Text>
-                        <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
-                        <MaterialCommunityIcons name="file-document-outline" size={24} color="#7b8a9e" />
-                        <Text style={styles.menuItemText}>Terms & Privacy Policy</Text>
-                        <MaterialCommunityIcons name="chevron-right" size={24} color="#3e5068" />
-                    </TouchableOpacity>
-                </View>
+                                    <TouchableOpacity onPress={handleSaveProfile} activeOpacity={0.8} disabled={isModifying}>
+                                        <LinearGradient
+                                            colors={isModifying ? ['#16362a', '#0e2419'] : ['#00c853', '#1b8a2a']}
+                                            style={styles.modalButton}
+                                        >
+                                            {isModifying ? (
+                                                <ActivityIndicator size="small" color="#FFFFFF" />
+                                            ) : (
+                                                <Text style={styles.modalButtonText}>Save Changes</Text>
+                                            )}
+                                        </LinearGradient>
+                                    </TouchableOpacity>
+                                </ScrollView>
+                            </View>
+                        </View>
+                    </TouchableWithoutFeedback>
+                </KeyboardAvoidingView>
+            </Modal>
 
-                {/* Logout Button */}
-                <TouchableOpacity style={styles.logoutButton} activeOpacity={0.8}>
-                    <MaterialCommunityIcons name="logout" size={20} color="#e53935" />
-                    <Text style={styles.logoutButtonText}>Log Out</Text>
-                </TouchableOpacity>
+            {/* Change Password Modal */}
+            <Modal
+                visible={isChangePasswordModalVisible}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => setIsChangePasswordModalVisible(false)}
+            >
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === "ios" ? "padding" : "height"}
+                    style={styles.modalOverlay}
+                >
+                    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                        <View style={styles.modalContainer}>
+                            <View style={styles.modalContent}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>Change Password</Text>
+                                    <TouchableOpacity onPress={() => setIsChangePasswordModalVisible(false)}>
+                                        <MaterialCommunityIcons name="close" size={24} color="#d0d8e4" />
+                                    </TouchableOpacity>
+                                </View>
 
-            </View>
-            <View style={{ height: 100 }} />
-        </ScrollView>
+                                <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                                    <View style={styles.modalInputGroup}>
+                                        <Text style={styles.modalLabel}>New Password</Text>
+                                        <TextInput
+                                            style={styles.modalInput}
+                                            placeholder="Enter new password"
+                                            placeholderTextColor="#7A8A99"
+                                            value={passwordForm.newPassword}
+                                            onChangeText={(text) => setPasswordForm({ ...passwordForm, newPassword: text })}
+                                            secureTextEntry
+                                        />
+                                    </View>
+
+                                    <View style={styles.modalInputGroup}>
+                                        <Text style={styles.modalLabel}>Confirm Password</Text>
+                                        <TextInput
+                                            style={styles.modalInput}
+                                            placeholder="Confirm new password"
+                                            placeholderTextColor="#7A8A99"
+                                            value={passwordForm.confirmPassword}
+                                            onChangeText={(text) => setPasswordForm({ ...passwordForm, confirmPassword: text })}
+                                            secureTextEntry
+                                        />
+                                    </View>
+
+                                    {passwordForm.newPassword && passwordForm.confirmPassword && passwordForm.newPassword === passwordForm.confirmPassword && (
+                                        <Text style={styles.successText}>Passwords match ✓</Text>
+                                    )}
+
+                                    <TouchableOpacity onPress={handleChangePassword} activeOpacity={0.8} disabled={isModifying}>
+                                        <LinearGradient
+                                            colors={isModifying ? ['#16362a', '#0e2419'] : ['#00c853', '#1b8a2a']}
+                                            style={styles.modalButton}
+                                        >
+                                            {isModifying ? (
+                                                <ActivityIndicator size="small" color="#FFFFFF" />
+                                            ) : (
+                                                <Text style={styles.modalButtonText}>Change Password</Text>
+                                            )}
+                                        </LinearGradient>
+                                    </TouchableOpacity>
+                                </ScrollView>
+                            </View>
+                        </View>
+                    </TouchableWithoutFeedback>
+                </KeyboardAvoidingView>
+            </Modal>
+
+            {/* Logout Confirmation Modal */}
+            <Modal
+                visible={isLogoutConfirmModalVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setIsLogoutConfirmModalVisible(false)}
+            >
+                <TouchableWithoutFeedback onPress={() => setIsLogoutConfirmModalVisible(false)}>
+                    <View style={styles.confirmModalOverlay}>
+                        <TouchableWithoutFeedback onPress={() => {}}>
+                            <View style={styles.confirmModalContent}>
+                                <MaterialCommunityIcons name="logout" size={40} color="#e53935" style={{ marginBottom: 16 }} />
+                                <Text style={styles.confirmModalTitle}>Confirm Logout</Text>
+                                <Text style={styles.confirmModalText}>Are you sure you want to logout from your account?</Text>
+                                
+                                <View style={styles.confirmModalButtons}>
+                                    <TouchableOpacity
+                                        style={styles.confirmModalCancelButton}
+                                        onPress={() => setIsLogoutConfirmModalVisible(false)}
+                                    >
+                                        <Text style={styles.confirmModalCancelText}>Cancel</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.confirmModalConfirmButton}
+                                        onPress={confirmLogout}
+                                    >
+                                        <Text style={styles.confirmModalConfirmText}>Logout</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+        </>
     );
 };
 
@@ -1041,7 +1452,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    placeholderText: {
+    placeholderTitle: {
         color: '#3e5068',
         fontSize: 18,
     },
@@ -1302,6 +1713,16 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#a0aec0',
     },
+    profileLoadingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 14,
+    },
+    profileLoadingText: {
+        color: '#7b8a9e',
+        fontSize: 13,
+    },
     historyMetricsRow: {
         flexDirection: 'row',
         justifyContent: 'flex-start',
@@ -1358,5 +1779,133 @@ const styles = StyleSheet.create({
     },
     timeRow: {
         //marginBottom: 0,
+    },
+    // --- Modal Styles ---
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    },
+    modalContainer: {
+        flex: 1,
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: '#0f1a26',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        paddingTop: 20,
+        maxHeight: '80%',
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingBottom: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#263345',
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#e0eee6',
+    },
+    modalBody: {
+        padding: 20,
+    },
+    modalInputGroup: {
+        marginBottom: 20,
+    },
+    modalLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#d0d8e4',
+        marginBottom: 8,
+    },
+    modalInput: {
+        backgroundColor: '#1a2332',
+        borderWidth: 1,
+        borderColor: '#263345',
+        borderRadius: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        color: '#e0eee6',
+        fontSize: 16,
+    },
+    modalButton: {
+        paddingVertical: 16,
+        borderRadius: 12,
+        alignItems: 'center',
+        marginTop: 20,
+        marginBottom: 40,
+    },
+    modalButtonText: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#FFFFFF',
+    },
+    successText: {
+        color: '#00c853',
+        fontSize: 14,
+        textAlign: 'center',
+        marginTop: 8,
+        fontWeight: '600',
+    },
+    confirmModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    confirmModalContent: {
+        backgroundColor: '#0f1a26',
+        borderRadius: 16,
+        padding: 24,
+        alignItems: 'center',
+        width: '100%',
+        maxWidth: 320,
+    },
+    confirmModalTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#e0eee6',
+        marginBottom: 12,
+    },
+    confirmModalText: {
+        fontSize: 14,
+        color: '#7b8a9e',
+        textAlign: 'center',
+        marginBottom: 24,
+    },
+    confirmModalButtons: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+    },
+    confirmModalCancelButton: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#263345',
+        alignItems: 'center',
+    },
+    confirmModalCancelText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#7b8a9e',
+    },
+    confirmModalConfirmButton: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 12,
+        backgroundColor: '#e53935',
+        alignItems: 'center',
+    },
+    confirmModalConfirmText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#FFFFFF',
     },
 });
