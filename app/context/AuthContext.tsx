@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import authService from '../services/authService';
 
 interface User {
     id: string;
@@ -11,12 +12,18 @@ interface AuthContextType {
     currentUser: User | null;
     loading: boolean;
     isAuthenticated: boolean;
+    login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    register: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
     currentUser: null,
     loading: false,
     isAuthenticated: false,
+    login: async () => ({ success: false }),
+    register: async () => ({ success: false }),
+    logout: async () => {},
 });
 
 export const useAuth = () => {
@@ -37,10 +44,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
     }, []);
 
+    const login = async (email: string, password: string) => {
+        setLoading(true);
+        try {
+            const result = await authService.loginWithEmailAndPassword(email, password);
+            if (result.success && result.user) {
+                setCurrentUser({
+                    id: result.user.id,
+                    email: result.user.email,
+                    displayName: result.user.displayName,
+                });
+                return { success: true };
+            }
+            return { success: false, error: result.error };
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const register = async (email: string, password: string) => {
+        setLoading(true);
+        try {
+            const result = await authService.registerWithEmailAndPassword({ email, password });
+            if (result.success && result.user) {
+                setCurrentUser({
+                    id: result.user.id,
+                    email: result.user.email,
+                    displayName: result.user.displayName,
+                });
+                return { success: true };
+            }
+            return { success: false, error: result.error };
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const logout = async () => {
+        setLoading(true);
+        try {
+            await authService.logout();
+            setCurrentUser(null);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const value: AuthContextType = {
         currentUser,
         loading,
         isAuthenticated: currentUser !== null,
+        login,
+        register,
+        logout,
     };
 
     return (

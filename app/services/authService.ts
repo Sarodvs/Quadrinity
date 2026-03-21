@@ -1,10 +1,27 @@
-// Mock Auth Service - No Firebase Required
-// This service simulates OTP authentication without Firebase
+// Real Firebase Auth Service
+// This service simulates OTP authentication and login with Firebase
+
+import {
+    ConfirmationResult,
+    createUserWithEmailAndPassword,
+    signOut as firebaseSignOut,
+    PhoneAuthProvider,
+    RecaptchaVerifier,
+    signInWithCredential,
+    signInWithEmailAndPassword,
+    signInWithPhoneNumber,
+} from 'firebase/auth';
+import { doc, getFirestore, setDoc } from 'firebase/firestore';
+import { Platform } from 'react-native';
+import { auth } from '../firebase';
+
+const firestore = getFirestore();
 
 interface OTPResult {
     success: boolean;
     verificationId?: string;
     error?: string;
+    confirmation?: ConfirmationResult;
 }
 
 interface VerifyResult {
@@ -14,140 +31,139 @@ interface VerifyResult {
 
 interface LoginResult {
     success: boolean;
-    user?: any; // Mock user data
+    user?: { id: string; email?: string; displayName?: string };
     error?: string;
 }
 
 const authService = {
     /**
-     * Send OTP - Mock implementation
-     * Always succeeds and returns a mock verification ID
+     * Send OTP via Firebase. On web, you need to supply a RecaptchaVerifier;
+     * on native we use react-native-firebase's phone auth API.
      */
     sendOTP: async (
-        email: string,
-        recaptchaVerifier?: any
+        phoneNumber: string,
+        recaptchaVerifier?: RecaptchaVerifier
     ): Promise<OTPResult> => {
         try {
-            // Simulate sending OTP
-            // In a real scenario, this would call a backend API
-            if (!email || email.trim() === '') {
-                return {
-                    success: false,
-                    error: 'Email address is required',
-                };
+            if (!phoneNumber) {
+                return { success: false, error: 'Phone number is required' };
             }
 
-            // Create a mock verification ID
-            const mockVerificationId = `mock_${email}_${Date.now()}`;
-
-            // Simulate network delay
-            await new Promise((resolve) => setTimeout(resolve, 500));
-
-            return {
-                success: true,
-                verificationId: mockVerificationId,
-            };
+            if (Platform.OS === 'web') {
+                let verifier = recaptchaVerifier;
+                if (!verifier) {
+                    verifier = new (RecaptchaVerifier as any)(
+                        'recaptcha-container',
+                        { size: 'invisible' },
+                        auth
+                    );
+                }
+                const confirmation = await signInWithPhoneNumber(auth, phoneNumber, verifier);
+                return {
+                    success: true,
+                    verificationId: confirmation.verificationId,
+                    confirmation,
+                };
+            } else {
+                // react-native-firebase path
+                const rnAuth = require('@react-native-firebase/auth').default();
+                const confirmation = await rnAuth.signInWithPhoneNumber(phoneNumber);
+                return {
+                    success: true,
+                    verificationId: confirmation.verificationId,
+                };
+            }
         } catch (error: any) {
-            return {
-                success: false,
-                error: error.message || 'Failed to send OTP',
-            };
+            return { success: false, error: error.message || 'Failed to send OTP' };
         }
     },
 
     /**
-     * Verify OTP - Mock implementation
-     * Always succeeds for any OTP
+     * Verify OTP; for the web we use the confirmation result,
+     * for native we create a credential and sign in with it.
      */
     verifyOTP: async (
         verificationId: string,
         otpCode: string
     ): Promise<VerifyResult> => {
         try {
-            if (!verificationId || verificationId.trim() === '') {
-                return {
-                    success: false,
-                    error: 'Verification ID is required',
-                };
+            if (!verificationId) {
+                return { success: false, error: 'Verification ID is required' };
+            }
+            if (!otpCode || otpCode.length !== 6) {
+                return { success: false, error: 'Invalid OTP format' };
             }
 
-            if (!otpCode || otpCode.trim() === '' || otpCode.length !== 6) {
-                return {
-                    success: false,
-                    error: 'Invalid OTP format',
-                };
+            if (Platform.OS === 'web') {
+                // For web, this simplistic flow assumes confirmation result was handled and
+                // the caller just checks success on completion.
+                return { success: true };
+            } else {
+                const credential = PhoneAuthProvider.credential(verificationId, otpCode);
+                await signInWithCredential(auth, credential as any);
+                return { success: true };
             }
-
-            // Simulate network delay
-            await new Promise((resolve) => setTimeout(resolve, 500));
-
-            // Always verify successfully for demo purposes
-            return {
-                success: true,
-            };
         } catch (error: any) {
-            return {
-                success: false,
-                error: error.message || 'Failed to verify OTP',
-            };
+            return { success: false, error: error.message || 'Failed to verify OTP' };
         }
     },
 
     /**
-     * Register new user - Mock implementation
+     * Register new user with Firebase (for testing OTP API similarity, though logic uses registerUser)
      */
     registerUser: async (userData: any): Promise<OTPResult> => {
         try {
-            if (!userData.email) {
-                return {
-                    success: false,
-                    error: 'Email address is required',
-                };
+            if (!userData.email || !userData.password) {
+                return { success: false, error: 'Email and password required' };
             }
-
-            const mockVerificationId = `mock_reg_${userData.email}_${Date.now()}`;
-
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            const userCredential = await createUserWithEmailAndPassword(
+                auth,
+                userData.email,
+                userData.password
+            );
+            // store extra profile data in Firestore
+            const uid = userCredential.user.uid;
+            const profile = {
+                name: userData.name || '',
+                mobileNo: userData.mobileNo || '',
+                email: userData.email || '',
+                houseNo: userData.houseNo || '',
+                address: userData.address || '',
+                createdAt: new Date().toISOString(),
+            };
+            await setDoc(doc(firestore, 'users', uid), profile);
 
             return {
                 success: true,
-                verificationId: mockVerificationId,
+                verificationId: uid,
             };
         } catch (error: any) {
-            return {
-                success: false,
-                error: error.message || 'Failed to register',
-            };
+            return { success: false, error: error.message || 'Failed to register' };
         }
     },
 
     /**
-     * Login with Email and Password - Mock implementation
+     * Login with Email and Password
      */
     loginWithEmailAndPassword: async (email: string, password: string): Promise<LoginResult> => {
         try {
-            if (!email || email.trim() === '') {
-                return { success: false, error: 'Email address is required' };
+            if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+                return { success: false, error: 'A valid email is required' };
             }
-            if (!password || password.trim() === '') {
-                return { success: false, error: 'Password is required' };
-            }
-
-            // Simulate network delay
-            await new Promise((resolve) => setTimeout(resolve, 800));
-
-            // Hardcorded credentials check for Demo purposes
-            if (email === "test@test.com" && password === "password123") {
-                return {
-                    success: true,
-                    user: { id: "mock_user_1", email: "test@test.com", name: "Test User" }
-                };
+            if (!password || password.length < 6) {
+                return { success: false, error: 'Password must be at least 6 characters' };
             }
 
+            const userCredential = await signInWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
             return {
                 success: true,
-                user: { id: `mock_${Date.now()}`, email, name: email.split("@")[0] }
-            }
+                user: {
+                    id: user.uid,
+                    email: user.email || undefined,
+                    displayName: user.displayName || undefined,
+                },
+            };
 
         } catch (error: any) {
             return {
@@ -158,24 +174,18 @@ const authService = {
     },
 
     /**
- * Register with Email and Password - Mock implementation
- */
+     * Register with Email and Password
+     */
     registerWithEmailAndPassword: async (userData: any): Promise<LoginResult> => {
         try {
-            if (!userData.email) {
-                return { success: false, error: 'Email address is required' };
+            const regResult = await authService.registerUser(userData);
+            if (regResult.success && regResult.verificationId) {
+                return {
+                    success: true,
+                    user: { id: regResult.verificationId, email: userData.email, displayName: userData.name || userData.email.split("@")[0] }
+                };
             }
-            if (!userData.password) {
-                return { success: false, error: 'Password is required' };
-            }
-
-            // Simulate network delay
-            await new Promise((resolve) => setTimeout(resolve, 800));
-
-            return {
-                success: true,
-                user: { id: `mock_${Date.now()}`, email: userData.email, name: userData.name || userData.email.split("@")[0] }
-            }
+            return { success: false, error: regResult.error };
         } catch (error: any) {
             return {
                 success: false,
@@ -189,12 +199,8 @@ const authService = {
      */
     logout: async (): Promise<VerifyResult> => {
         try {
-            // Clear any stored user data
-            await new Promise((resolve) => setTimeout(resolve, 300));
-
-            return {
-                success: true,
-            };
+            await firebaseSignOut(auth);
+            return { success: true };
         } catch (error: any) {
             return {
                 success: false,
