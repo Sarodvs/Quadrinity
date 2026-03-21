@@ -6,6 +6,7 @@ import { useEffect } from "react";
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider } from '@/app/context/AuthContext';
+import { AppThemeProvider } from '@/app/context/ThemeContext';
 
 export const unstable_settings = {
   anchor: 'login',
@@ -17,7 +18,8 @@ export default function RootLayout() {
  
   return (
     <AuthProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <AppThemeProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <Stack
           initialRouteName="login"
           screenOptions={{
@@ -41,7 +43,8 @@ export default function RootLayout() {
         </Stack>
 
         <StatusBar style="light" backgroundColor="#000000" />
-      </ThemeProvider>
+        </ThemeProvider>
+      </AppThemeProvider>
     </AuthProvider>
   );
 }

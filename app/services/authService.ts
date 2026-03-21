@@ -27,52 +27,67 @@ interface OTPResult {
 interface VerifyResult {
     success: boolean;
     error?: string;
+    role?: string;
 }
 
 interface LoginResult {
     success: boolean;
     user?: { id: string; email?: string; displayName?: string };
     error?: string;
+    needsOtp?: boolean;
+    verificationId?: string;
 }
 
+// Fixed dummy password for pure frontend passwordless OTP flow demo
+const OTP_DUMMY_PASSWORD = 'Passwordless123!@#';
+
 const authService = {
-    /**
-     * Send OTP via Firebase. On web, you need to supply a RecaptchaVerifier;
-     * on native we use react-native-firebase's phone auth API.
-     */
-    sendOTP: async (
-        phoneNumber: string,
-        recaptchaVerifier?: RecaptchaVerifier
-    ): Promise<OTPResult> => {
+    // Generates a 6-digit OTP and saves it to Firestore.
+    // In production, a Cloud Function triggers on this document creation and emails the code.
+    sendOTP: async (email: string): Promise<OTPResult> => {
         try {
-            if (!phoneNumber) {
-                return { success: false, error: 'Phone number is required' };
+            if (!email || email.trim() === '') {
+                return { success: false, error: 'Email address is required' };
             }
 
-            if (Platform.OS === 'web') {
-                let verifier = recaptchaVerifier;
-                if (!verifier) {
-                    verifier = new (RecaptchaVerifier as any)(
-                        'recaptcha-container',
-                        { size: 'invisible' },
-                        auth
-                    );
-                }
-                const confirmation = await signInWithPhoneNumber(auth, phoneNumber, verifier);
-                return {
-                    success: true,
-                    verificationId: confirmation.verificationId,
-                    confirmation,
-                };
-            } else {
-                // react-native-firebase path
-                const rnAuth = require('@react-native-firebase/auth').default();
-                const confirmation = await rnAuth.signInWithPhoneNumber(phoneNumber);
-                return {
-                    success: true,
-                    verificationId: confirmation.verificationId,
-                };
+            const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+            // Save OTP in Firestore
+            await setDoc(doc(db, 'login_otps', email.toLowerCase()), {
+                otp: otpCode,
+                createdAt: serverTimestamp(),
+                expiresAt: new Date().getTime() + 10 * 60 * 1000 // 10 minutes
+            });
+
+            console.log(`\n\n================================`);
+            console.log(`[DEV MODE] GENERATED OTP FOR ${email} IS: ${otpCode}`);
+            console.log(`================================\n\n`);
+
+            // --- ACTUAL EMAIL SENDING LOGIC (Using EmailJS Free API) ---
+            try {
+                await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        service_id: 'service_vsyjh2g',
+                        template_id: 'template_sbb94kl',
+                        user_id: 'nr8pT9rNIqTdlXzSy',
+                        template_params: {
+                            to_email: email,
+                            otp_code: otpCode
+                        }
+                    })
+                });
+                console.log("Email sent successfully via EmailJS!");
+            } catch (emailError) {
+                console.log("Failed to send email via EmailJS (check keys)", emailError);
             }
+            // -----------------------------------------------------------
+
+            return {
+                success: true,
+                verificationId: email.toLowerCase(),
+            };
         } catch (error: any) {
             return { success: false, error: error.message || 'Failed to send OTP' };
         }
@@ -165,11 +180,13 @@ const authService = {
                 },
             };
 
-        } catch (error: any) {
             return {
-                success: false,
-                error: error.message || 'Failed to login',
+                success: true,
+                needsOtp: true,
+                verificationId: otpResult.verificationId,
             };
+        } catch (error: any) {
+            return { success: false, error: error.message || 'Failed to login' };
         }
     },
 
@@ -187,25 +204,29 @@ const authService = {
             }
             return { success: false, error: regResult.error };
         } catch (error: any) {
-            return {
-                success: false,
-                error: error.message || 'Failed to register',
-            };
+             console.log("Registration Error:", error);
+             // Handle "email already in use" gracefully
+             if (error.code === 'auth/email-already-in-use') {
+                 return { success: false, error: 'This email is already registered. Try logging in.' };
+             }
+             return { success: false, error: error.message || 'Failed to register' };
         }
     },
 
-    /**
-     * Logout - Mock implementation
-     */
+    registerUser: async (userData: any): Promise<OTPResult> => {
+        const result = await authService.registerWithEmailAndPassword(userData);
+        if (result.success) {
+            return { success: true, verificationId: userData.email };
+        }
+        return { success: false, error: result.error };
+    },
+
     logout: async (): Promise<VerifyResult> => {
         try {
             await firebaseSignOut(auth);
             return { success: true };
         } catch (error: any) {
-            return {
-                success: false,
-                error: error.message || 'Failed to logout',
-            };
+            return { success: false, error: error.message || 'Failed to logout' };
         }
     },
 };

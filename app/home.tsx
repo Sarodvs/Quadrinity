@@ -3,6 +3,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import React, { useState } from 'react';
 import { updatePassword } from 'firebase/auth';
 import { addDoc, collection, doc, getDoc, getFirestore, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
@@ -20,9 +22,19 @@ import {
     ScrollView,
     StatusBar,
     StyleSheet,
+    Switch,
     Text,
     TextInput,
     TouchableOpacity,
+    View,
+    Modal
+} from 'react-native';
+import { Calendar } from 'react-native-calendars';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import QRCode from 'react-native-qrcode-svg';
+import { ThemeContext } from './context/ThemeContext';
+import { auth, db } from './firebaseConfig';
+import authService from './services/authService';
     TouchableWithoutFeedback,
     View
 } from 'react-native';
@@ -44,6 +56,7 @@ interface Order {
     date: string;
     time: string;
     status: string;
+    dbId?: string;
     weight?: string;
     points?: string;
 }
@@ -91,6 +104,7 @@ const clampToBusinessHours = (time: Date) => {
 const getMinutesOfDay = (time: Date) => time.getHours() * 60 + time.getMinutes();
 
 export default function HomeScreen() {
+    const { colors, isDark } = React.useContext(ThemeContext);
     const [activeTab, setActiveTab] = useState('home');
     const [orders, setOrders] = useState<Order[]>([]);
     const [isOrdersLoading, setIsOrdersLoading] = useState(true);
@@ -107,6 +121,39 @@ export default function HomeScreen() {
     const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' });
     const [isLogoutConfirmModalVisible, setIsLogoutConfirmModalVisible] = useState(false);
     const [isModifying, setIsModifying] = useState(false);
+
+    React.useEffect(() => {
+        const fetchOrders = async () => {
+            const userEmail = auth.currentUser?.email;
+            if (!userEmail) return;
+            try {
+                const q = query(
+                    collection(db, 'orders'),
+                    where('userEmail', '==', userEmail.toLowerCase())
+                );
+                const querySnapshot = await getDocs(q);
+                const fetchedOrders: Order[] = [];
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    fetchedOrders.push({
+                        id: docSnap.id.substring(0, 8).toUpperCase(),
+                        dbId: docSnap.id,
+                        type: data.type || 'Scrap/Recyclable Waste',
+                        date: data.date,
+                        time: data.time,
+                        status: data.status,
+                    });
+                });
+                setOrders(fetchedOrders);
+            } catch (error) {
+                console.error("Error fetching orders:", error);
+            }
+        };
+        
+        if (activeTab === 'orders' || activeTab === 'history') {
+            fetchOrders();
+        }
+    }, [activeTab]);
 
     // Booking State
     const [isBooking, setIsBooking] = useState(false);
@@ -138,6 +185,22 @@ export default function HomeScreen() {
         const timeString = `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
         try {
+            const userEmail = auth.currentUser?.email;
+            let residentName = 'Resident';
+            let address = '';
+            
+            if (userEmail) {
+                const userDoc = await getDoc(doc(db, 'users', userEmail.toLowerCase()));
+                if (userDoc.exists()) {
+                    residentName = userDoc.data().name || userEmail.split('@')[0];
+                    address = userDoc.data().address || '';
+                }
+            }
+
+            const newOrderData = {
+                userEmail: userEmail?.toLowerCase() || '',
+                residentName,
+                address,
             const firestore = getFirestore();
             await addDoc(collection(firestore, 'orders'), {
                 userId,
@@ -377,9 +440,9 @@ export default function HomeScreen() {
     };
 
     return (
-        <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="light-content" />
-            <View style={styles.container}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+            <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
 
                 {activeTab === 'home' && !isBooking && (
                     <HomeContent onBookAppointment={handleStartBooking} />
@@ -434,7 +497,7 @@ export default function HomeScreen() {
                 )}
 
                 {/* Bottom Navigation */}
-                <View style={styles.bottomNav}>
+                <View style={[styles.bottomNav, { backgroundColor: colors.navBg, borderTopColor: colors.navBorder }]}>
                     {NAV_ITEMS.map((item) => {
                         const isActive = activeTab === item.id;
                         return (
@@ -445,16 +508,16 @@ export default function HomeScreen() {
                             >
                                 <View style={[styles.navIconContainer, isActive && styles.navIconActive]}>
                                     <LinearGradient
-                                        colors={isActive ? ['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.08)'] : ['transparent', 'transparent']}
+                                        colors={isActive ? [colors.navIconActiveBgGradStart, colors.navIconActiveBgGradEnd] : ['transparent', 'transparent']}
                                         style={StyleSheet.absoluteFillObject}
                                     />
                                     <MaterialCommunityIcons
                                         name={isActive ? (item.iconActive as any) : (item.icon as any)}
                                         size={24}
-                                        color={isActive ? '#00c853' : '#3e5068'}
+                                        color={isActive ? colors.primary : colors.navIcon}
                                     />
                                 </View>
-                                <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>
+                                <Text style={[styles.navLabel, isActive && styles.navLabelActive, !isActive && { color: colors.navIcon }]}>
                                     {item.label}
                                 </Text>
                             </TouchableOpacity>
@@ -469,11 +532,26 @@ export default function HomeScreen() {
 // --- Sub Components ---
 
 const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) => {
+    const { isDark, colors } = React.useContext(ThemeContext);
     const handleUPIPayment = async () => {
-        // Example UPI URI structure
-        const upiUri = 'upi://pay?pa=haritham@upi&pn=Haritham&am=1.00&cu=INR';
-
         try {
+            const docRef = doc(db, 'system', 'payment_settings');
+            const docSnap = await getDoc(docRef);
+
+            if (!docSnap.exists() || !docSnap.data().official_upi_id) {
+                Alert.alert("Notice", "The official has not set up their receiving UPI details yet.");
+                return;
+            }
+
+            const data = docSnap.data();
+            const officialUpi = data.official_upi_id;
+            const officialName = data.official_bank_name;
+
+            const payeeName = officialName ? encodeURIComponent(officialName) : encodeURIComponent('Haritham Official Collection');
+
+            // Example UPI URI structure using the dynamically fetched ID
+            const upiUri = `upi://pay?pa=${officialUpi}&pn=${payeeName}&am=1.00&cu=INR`;
+
             const supported = await Linking.canOpenURL(upiUri);
             if (supported) {
                 await Linking.openURL(upiUri);
@@ -481,7 +559,8 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                 Alert.alert("Error", "No UPI app found on this device.");
             }
         } catch (error) {
-            Alert.alert("Error", "Failed to open UPI app.");
+            Alert.alert("Error", "Failed to construct or open UPI app intent.");
+            console.error("UPI Error: ", error);
         }
     };
 
@@ -492,7 +571,7 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
         >
             {/* Header */}
             <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120']}
+                colors={isDark ? ['#0a3f18', '#0d2f16', '#0b1a12', '#0b1120'] : [colors.headerGrad1, colors.headerGrad2, colors.headerGrad3, colors.headerGrad4]}
                 locations={[0, 0.4, 0.7, 1]}
                 style={styles.header}
             >
@@ -503,8 +582,8 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                         resizeMode="contain"
                     />
                     <View style={styles.taglineContainer}>
-                        <Text style={styles.taglineStart}>Your Waste</Text>
-                        <Text style={styles.taglineEnd}>Our Responsibility</Text>
+                        <Text style={[styles.taglineStart, { color: isDark ? '#ffffff' : colors.text }]}>Your Waste</Text>
+                        <Text style={[styles.taglineEnd, { color: isDark ? '#ffffff' : colors.text }]}>Our Responsibility</Text>
                     </View>
                 </View>
 
@@ -519,7 +598,7 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
             {/* Content Section */}
             <View style={styles.contentSection}>
                 {/* Book Appointment Card */}
-                <Text style={styles.sectionTitle}>Book Your Appointment</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Book Your Appointment</Text>
                 <TouchableOpacity activeOpacity={0.9} onPress={onBookAppointment}>
                     <LinearGradient
                         colors={['#0f2d1a', '#0c1e14', '#0b1518']}
@@ -544,8 +623,8 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                 </TouchableOpacity>
 
                 {/* Collection Points Card */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Collection Points Near Me</Text>
-                <TouchableOpacity activeOpacity={0.9}>
+                <Text style={[styles.sectionTitle, { marginTop: 32, color: colors.textSecondary }]}>Collection Points Near Me</Text>
+                <TouchableOpacity activeOpacity={0.9} onPress={() => Alert.alert('Coming Soon', 'Collection points feature is under development.')}>
                     <LinearGradient
                         colors={['#0f2d1a', '#0c1e14', '#0b1518']}
                         start={{ x: 0, y: 0 }}
@@ -568,8 +647,28 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                     </LinearGradient>
                 </TouchableOpacity>
 
+                {/* Your Contribution Section */}
+                <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 20, color: colors.textSecondary }]}>Your Contribution</Text>
+                <View style={styles.contributionContainer}>
+                    {/* Circular Progress Mock */}
+                    <View style={styles.circularProgress}>
+                        <View style={styles.innerCircle}>
+                            <Text style={[styles.contributionValue, { color: colors.text }]}>0.00</Text>
+                            <Text style={[styles.contributionUnit, { color: colors.textSecondary }]}>kg</Text>
+                        </View>
+                        {/* Ring borders */}
+                        <View style={styles.ringBackground} />
+                        <View style={styles.ringProgress} />
+                    </View>
+
+                    <View style={styles.wasteTypeTag}>
+                        <MaterialCommunityIcons name="leaf" size={14} color="#00c853" />
+                        <Text style={[styles.wasteTypeText, { color: colors.textSecondary }]}>Scrap Waste</Text>
+                    </View>
+                </View>
+
                 {/* Payments Section */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Payments & Bills</Text>
+                <Text style={[styles.sectionTitle, { marginTop: 32, color: colors.textSecondary }]}>Payments & Bills</Text>
                 <TouchableOpacity activeOpacity={0.9} onPress={handleUPIPayment}>
                     <LinearGradient
                         colors={['#0f2d1a', '#0c1e14', '#0b1518']}
@@ -690,29 +789,59 @@ const BookingContent = ({
         if (picker === 'end') onEndTimeChange(adjustedTime);
     };
 
+    const [isCalendarOpen, setCalendarOpen] = useState(false);
+    const [isStartTimeOpen, setStartTimeOpen] = useState(false);
+    const [isEndTimeOpen, setEndTimeOpen] = useState(false);
+    const [availableDates, setAvailableDates] = useState<any>({});
+
+    React.useEffect(() => {
+        const fetchAvailability = async () => {
+            const docRef = doc(db, 'system', 'collection_schedule');
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                const dates = docSnap.data().availableDates || [];
+                const marked: any = {};
+                dates.forEach((d: string) => {
+                    marked[d] = { marked: true, dotColor: '#00c853' };
+                });
+                setAvailableDates(marked);
+            }
+        };
+        fetchAvailability();
+    }, []);
+
+    const handleDayPress = (day: any) => {
+        if (!availableDates[day.dateString]) {
+            Alert.alert("Date Unavailable", "The official is not available on this date. Please choose a marked date.");
+            return;
+        }
+        onDateChange(new Date(day.dateString));
+        setCalendarOpen(false);
+    };
+
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header */}
             <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                colors={isDark ? ['#0a3f18', '#0d2f16', '#0b1a12'] : [colors.headerGrad1, colors.headerGrad2, colors.headerGrad3]}
                 locations={[0, 0.5, 1]}
                 style={[styles.header, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
             >
-                <Text style={styles.profileName}>Schedule Pickup</Text>
-                <Text style={styles.profileEmail}>Select a convenient time for collection</Text>
+                <Text style={[styles.profileName, { color: isDark ? '#ffffff' : colors.text }]}>Schedule Pickup</Text>
+                <Text style={[styles.profileEmail, { color: isDark ? '#a0aec0' : colors.textSecondary }]}>Select a convenient time for collection</Text>
             </LinearGradient>
 
             <View style={styles.contentSection}>
                 {/* Date Selection */}
-                <Text style={styles.inputLabel}>Select Date</Text>
-                <View style={styles.card}>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Select Date</Text>
+                <View style={[styles.card, { borderColor: colors.cardBorder, backgroundColor: isDark ? '#0f1a26' : colors.cardBg }]}>
                     <View style={[styles.iconBox, { width: 48, height: 48 }]}>
                         <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
                             <MaterialCommunityIcons name="calendar-month" size={24} color="#00c853" />
                         </LinearGradient>
                     </View>
                     <View style={styles.cardContent}>
-                        <Text style={selectedDate ? styles.inputText : styles.placeholderText}>
+                        <Text style={selectedDate ? [styles.inputText, { color: colors.text }] : styles.placeholderText}>
                             {selectedDate ? selectedDate.toLocaleDateString() : 'Choose a date'}
                         </Text>
                     </View>
@@ -732,6 +861,31 @@ const BookingContent = ({
                     </View>
                 )}
 
+                <Modal visible={isCalendarOpen} transparent animationType="slide">
+                    <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
+                        <View style={{ backgroundColor: isDark ? '#0f1a26' : colors.cardBg, borderRadius: 16, overflow: 'hidden' }}>
+                            <Calendar
+                                markedDates={{
+                                    ...availableDates,
+                                    ...(selectedDate ? { [selectedDate.toISOString().split('T')[0]]: { selected: true, selectedColor: '#00c853' } } : {})
+                                }}
+                                onDayPress={handleDayPress}
+                                minDate={new Date().toISOString().split('T')[0]}
+                                theme={{
+                                    backgroundColor: isDark ? '#0f1a26' : colors.cardBg,
+                                    calendarBackground: isDark ? '#0f1a26' : colors.cardBg,
+                                    monthTextColor: colors.text,
+                                    dayTextColor: colors.text,
+                                    todayTextColor: '#00c853',
+                                }}
+                            />
+                            <TouchableOpacity style={{ padding: 16, alignItems: 'center', backgroundColor: '#e53935' }} onPress={() => setCalendarOpen(false)}>
+                                <Text style={{ color: '#fff', fontWeight: '600' }}>Cancel</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+
                 {/* Time Selection */}
                 <Text style={[styles.inputLabel, { marginTop: 24 }]}>Select Time Window</Text>
                 <Text style={styles.inputHint}>Pickup hours: 9:00 AM to 5:00 PM</Text>
@@ -742,15 +896,15 @@ const BookingContent = ({
                 <View style={styles.timeRowsContainer}>
                     {/* Start Time */}
                     <View style={styles.timeRow}>
-                        <Text style={[styles.inputLabel, { fontSize: 13, color: '#7b8a9e', marginBottom: 8, marginTop: 8 }]}>From Time</Text>
-                        <View style={styles.card}>
+                        <Text style={[styles.inputLabel, { fontSize: 13, color: colors.textMuted, marginBottom: 8, marginTop: 8 }]}>From Time</Text>
+                        <View style={[styles.card, { borderColor: colors.cardBorder, backgroundColor: isDark ? '#0f1a26' : colors.cardBg }]}>
                             <View style={[styles.iconBox, { width: 48, height: 48 }]}>
                                 <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
                                     <MaterialCommunityIcons name="clock-start" size={24} color="#00c853" />
                                 </LinearGradient>
                             </View>
                             <View style={styles.cardContent}>
-                                <Text style={startTime ? styles.inputText : styles.placeholderText}>
+                                <Text style={startTime ? [styles.inputText, { color: colors.text }] : styles.placeholderText}>
                                     {startTime ? startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Start Time'}
                                 </Text>
                             </View>
@@ -773,15 +927,15 @@ const BookingContent = ({
 
                     {/* End Time */}
                     <View style={styles.timeRow}>
-                        <Text style={[styles.inputLabel, { fontSize: 13, color: '#7b8a9e', marginBottom: 8, marginTop: 16 }]}>To Time</Text>
-                        <View style={styles.card}>
+                        <Text style={[styles.inputLabel, { fontSize: 13, color: colors.textMuted, marginBottom: 8, marginTop: 16 }]}>To Time</Text>
+                        <View style={[styles.card, { borderColor: colors.cardBorder, backgroundColor: isDark ? '#0f1a26' : colors.cardBg }]}>
                             <View style={[styles.iconBox, { width: 48, height: 48 }]}>
                                 <LinearGradient colors={['rgba(0,200,83,0.2)', 'rgba(0,200,83,0.05)']} style={styles.iconGradient}>
                                     <MaterialCommunityIcons name="clock-end" size={24} color="#00c853" />
                                 </LinearGradient>
                             </View>
                             <View style={styles.cardContent}>
-                                <Text style={endTime ? styles.inputText : styles.placeholderText}>
+                                <Text style={endTime ? [styles.inputText, { color: colors.text }] : styles.placeholderText}>
                                     {endTime ? endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'End Time'}
                                 </Text>
                             </View>
@@ -802,6 +956,29 @@ const BookingContent = ({
                         )}
                     </View>
                 </View>
+
+                {isStartTimeOpen && (
+                    <DateTimePicker
+                        value={startTime || new Date()}
+                        mode="time"
+                        display="default"
+                        onChange={(event, date) => {
+                            setStartTimeOpen(false);
+                            if (date) onStartTimeChange(date);
+                        }}
+                    />
+                )}
+                {isEndTimeOpen && (
+                    <DateTimePicker
+                        value={endTime || new Date()}
+                        mode="time"
+                        display="default"
+                        onChange={(event, date) => {
+                            setEndTimeOpen(false);
+                            if (date) onEndTimeChange(date);
+                        }}
+                    />
+                )}
 
                 {/* Actions */}
                 <View style={{ marginTop: 40, gap: 16 }}>
@@ -872,8 +1049,8 @@ const OrdersContent = ({
                     </View>
                 </View>
 
-                <Text style={styles.emptyStateTitle}>No Orders Yet</Text>
-                <Text style={styles.emptyStateDescription}>
+                <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No Orders Yet</Text>
+                <Text style={[styles.emptyStateDescription, { color: colors.textSecondary }]}>
                     You don't have any waste collection orders at the moment. Schedule a pickup to get started.
                 </Text>
 
@@ -996,12 +1173,12 @@ const HistoryContent = ({
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header / Summary Area */}
             <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
+                colors={isDark ? ['#0a3f18', '#0d2f16', '#0b1a12'] : [colors.headerGrad1, colors.headerGrad2, colors.headerGrad3]}
                 locations={[0, 0.5, 1]}
                 style={[styles.header, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
             >
-                <Text style={styles.profileName}>Collection History</Text>
-                <Text style={styles.profileEmail}>Your past waste management activities</Text>
+                <Text style={[styles.profileName, { color: isDark ? '#ffffff' : colors.text }]}>Collection History</Text>
+                <Text style={[styles.profileEmail, { color: isDark ? '#a0aec0' : colors.textSecondary }]}>Your past waste management activities</Text>
 
                 <View style={[styles.statsContainer, { marginTop: 20, backgroundColor: 'transparent', borderWidth: 0, padding: 0, shadowOpacity: 0 }]}>
                     <View style={styles.statBox}>
@@ -1017,7 +1194,7 @@ const HistoryContent = ({
             </LinearGradient>
 
             <View style={styles.contentSection}>
-                <Text style={styles.sectionTitle}>Recent Orders</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Recent Orders</Text>
 
                 {isOrdersLoading ? (
                     <View style={styles.emptyStateContainer}>
@@ -1026,9 +1203,9 @@ const HistoryContent = ({
                     </View>
                 ) : historyOrders.length === 0 ? (
                     <View style={styles.emptyStateContainer}>
-                        <MaterialCommunityIcons name="history" size={80} color="#263345" style={{ marginBottom: 16 }} />
-                        <Text style={styles.emptyStateTitle}>No History found</Text>
-                        <Text style={styles.emptyStateDescription}>You don't have any past orders yet.</Text>
+                        <MaterialCommunityIcons name="history" size={80} color={colors.navIcon} style={{ marginBottom: 16 }} />
+                        <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No History found</Text>
+                        <Text style={[styles.emptyStateDescription, { color: colors.textSecondary }]}>You don't have any past orders yet.</Text>
                     </View>
                 ) : (
                     historyOrders.map((item) => (
@@ -1051,17 +1228,6 @@ const HistoryContent = ({
                                 <View style={styles.historyDetailRow}>
                                     <MaterialCommunityIcons name="calendar-clock" size={16} color="#7b8a9e" />
                                     <Text style={styles.historyDetailText}>{item.date}, {item.time}</Text>
-                                </View>
-
-                                <View style={styles.historyMetricsRow}>
-                                    <View style={styles.historyMetricGroup}>
-                                        <MaterialCommunityIcons name="weight" size={16} color="#00c853" />
-                                        <Text style={styles.historyMetricText}>{item.weight}</Text>
-                                    </View>
-                                    <View style={styles.historyMetricGroup}>
-                                        <MaterialCommunityIcons name="leaf-circle" size={16} color="#00c853" />
-                                        <Text style={styles.historyMetricText}>{item.points}</Text>
-                                    </View>
                                 </View>
                             </View>
                         </View>
@@ -1143,6 +1309,16 @@ const ProfileContent = ({
                     </View>
                 </LinearGradient>
 
+                {/* Contact & Location */}
+                <Text style={[styles.sectionTitle, { marginTop: 32, color: colors.textSecondary }]}>Personal Details</Text>
+                <View style={[styles.detailsCard, { backgroundColor: colors.cardBg, borderColor: colors.cardBorder }]}>
+                    <View style={styles.detailRow}>
+                        <View style={styles.detailIconBox}>
+                            <MaterialCommunityIcons name="home-outline" size={20} color="#00c853" />
+                        </View>
+                        <View style={styles.detailTextContainer}>
+                            <Text style={styles.detailLabel}>House / Flat No.</Text>
+                            <Text style={[styles.detailValue, { color: colors.text }]}>{userProfile?.houseNo || 'Not Provided'}</Text>
                 <View style={styles.contentSection}>
                     {/* Stats Section */}
                     <Text style={styles.sectionTitle}>Your Impact</Text>
@@ -1238,6 +1414,34 @@ const ProfileContent = ({
                 <View style={{ height: 100 }} />
             </ScrollView>
 
+                {/* Logout Button */}
+                <TouchableOpacity style={styles.logoutButton} activeOpacity={0.8} onPress={handleLogout}>
+                    <MaterialCommunityIcons name="logout" size={20} color="#e53935" />
+                    <Text style={styles.logoutButtonText}>Log Out</Text>
+                </TouchableOpacity>
+
+            </View>
+            <View style={{ height: 100 }} />
+
+            {/* QR Modal */}
+            <Modal visible={qrModalVisible} transparent animationType="fade">
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 24, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 20 }}>Your Identity</Text>
+                        <QRCode
+                            value={userProfile?.email || 'Unknown User'}
+                            size={200}
+                            color="#111"
+                            backgroundColor="#fff"
+                        />
+                        <Text style={{ color: '#555', marginTop: 16, textAlign: 'center' }}>Scan this code when your{'\n'}waste is collected.</Text>
+                        <TouchableOpacity style={{ marginTop: 24, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: '#00c853', borderRadius: 24 }} onPress={() => setQrModalVisible(false)}>
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Close</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+        </ScrollView>
             {/* Edit Profile Modal */}
             <Modal
                 visible={isEditProfileModalVisible}
@@ -1454,14 +1658,12 @@ const styles = StyleSheet.create({
     },
     taglineStart: {
         fontSize: 18,
-        color: '#ffffffff',
         fontWeight: '700',
         letterSpacing: 0.5,
         marginBottom: 2,
     },
     taglineEnd: {
         fontSize: 18,
-        color: '#ffffffff',
         fontWeight: '700',
         letterSpacing: 0.5,
     },
@@ -2067,9 +2269,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '500',
     },
-    placeholderText: {
-        color: '#5c6b7f',
-    },
+
     errorText: {
         color: '#ff4d4f',
     },
