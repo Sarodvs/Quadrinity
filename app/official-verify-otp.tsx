@@ -17,6 +17,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import authService from './services/authService';
+import { useAuth } from './context/AuthContext';
 
 export default function OfficialVerifyOtpScreen() {
     const router = useRouter();
@@ -66,17 +67,25 @@ export default function OfficialVerifyOtpScreen() {
         }
     };
 
+    const { verifyOTPAndLogin } = useAuth();
+
     const handleVerify = async () => {
         if (otp.every((d) => d)) {
             setIsVerifying(true);
             setOtpError('');
             try {
                 const otpCode = otp.join('');
-                const result = await authService.verifyOTP(verificationId || '', otpCode);
+                let result;
+                
+                if (verifyOTPAndLogin) {
+                    result = await verifyOTPAndLogin(verificationId || '', otpCode, officialId || '');
+                } else {
+                    result = await authService.verifyOTP(verificationId || '', otpCode);
+                }
 
                 if (result.success) {
-                    // Navigate directly to home on success
-                    router.replace('/home');
+                    // Navigate directly to official dashboard on success
+                    router.replace('/official-dashboard');
                 } else {
                     setOtpError(result.error || 'Invalid OTP. Please try again.');
                 }

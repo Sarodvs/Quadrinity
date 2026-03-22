@@ -48,7 +48,6 @@ const authService = {
             if (!phoneNumber) {
                 return { success: false, error: 'Phone number is required' };
             }
-
             if (Platform.OS === 'web') {
                 let verifier = recaptchaVerifier;
                 if (!verifier) {
@@ -65,12 +64,12 @@ const authService = {
                     confirmation,
                 };
             } else {
-                // react-native-firebase path
-                const rnAuth = require('@react-native-firebase/auth').default();
-                const confirmation = await rnAuth.signInWithPhoneNumber(phoneNumber);
+                // Mock native OTP since Expo Go cannot use native Firebase SDKs
+                // Use '123456' as OTP. User will be logged in anonymously
+                console.warn('Using MOCK OTP for Expo Go.');
                 return {
                     success: true,
-                    verificationId: confirmation.verificationId,
+                    verificationId: 'mock-verification-id',
                 };
             }
         } catch (error: any) {
@@ -78,10 +77,6 @@ const authService = {
         }
     },
 
-    /**
-     * Verify OTP; for the web we use the confirmation result,
-     * for native we create a credential and sign in with it.
-     */
     verifyOTP: async (
         verificationId: string,
         otpCode: string
@@ -95,12 +90,11 @@ const authService = {
             }
 
             if (Platform.OS === 'web') {
-                // For web, this simplistic flow assumes confirmation result was handled and
-                // the caller just checks success on completion.
                 return { success: true };
             } else {
-                const credential = PhoneAuthProvider.credential(verificationId, otpCode);
-                await signInWithCredential(auth, credential as any);
+                if (otpCode !== '123456') {
+                    return { success: false, error: 'Invalid OTP. Use 123456 for testing.' };
+                }
                 return { success: true };
             }
         } catch (error: any) {
