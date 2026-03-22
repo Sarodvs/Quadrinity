@@ -2,10 +2,9 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
-import { useEffect } from "react";
 
+import { AuthProvider } from '@/context/AuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { AuthProvider } from '@/app/context/AuthContext';
 
 export const unstable_settings = {
   anchor: 'login',
@@ -36,9 +35,11 @@ export default function RootLayout() {
           />
           <Stack.Screen name="verify-otp" />
           <Stack.Screen name="official-verify-otp" />
+          <Stack.Screen name="admin-officials" />
           <Stack.Screen name="forgot-password" />
           <Stack.Screen name="home" />
           <Stack.Screen name="official-dashboard" />
+          <Stack.Screen name="official-history" />
         </Stack>
 
         <StatusBar style="light" backgroundColor="#000000" />

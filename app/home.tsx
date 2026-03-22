@@ -1,10 +1,11 @@
-import { auth as firebaseAuth } from '@/app/firebase';
+import { useAuth } from '@/context/AuthContext';
+import { auth as firebaseAuth } from '@/firebase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { updatePassword } from 'firebase/auth';
-import { addDoc, collection, doc, getDoc, getFirestore, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, getFirestore, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -26,7 +27,6 @@ import {
     TouchableWithoutFeedback,
     View
 } from 'react-native';
-import { useAuth } from './context/AuthContext';
 
 const { width } = Dimensions.get('window');
 
@@ -61,6 +61,12 @@ const normalizeOrderStatus = (status?: string) => {
     if (value === 'completed') return 'Completed';
     if (value === 'cancelled' || value === 'canceled') return 'Cancelled';
     return status?.trim() || 'Scheduled';
+};
+
+const parseWeightKg = (weight: string | undefined) => {
+    if (!weight) return 0;
+    const numericValue = parseFloat(weight.replace(/[^0-9.]/g, ''));
+    return Number.isNaN(numericValue) ? 0 : numericValue;
 };
 
 const BUSINESS_HOUR_START = 9;
@@ -139,12 +145,63 @@ export default function HomeScreen() {
 
         try {
             const firestore = getFirestore();
+            const bookingDateKey = selectedDate.toISOString().split('T')[0];
+            const monthKey = bookingDateKey.slice(0, 7);
+
+            let assignedOfficialId = '';
+            let assignedOfficialName = '';
+
+            const availableOfficialsSnapshot = await getDocs(
+                query(
+                    collection(firestore, 'officials'),
+                    where(`availabilityByMonth.${monthKey}`, 'array-contains', bookingDateKey)
+                )
+            );
+
+            const activeOfficials = availableOfficialsSnapshot.docs
+                .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
+                .filter((official) => official.isActive !== false);
+
+            if (activeOfficials.length > 0) {
+                const sameDayAssignments = await getDocs(
+                    query(collection(firestore, 'orders'), where('dateKey', '==', bookingDateKey))
+                );
+
+                const loadByOfficial: Record<string, number> = {};
+                sameDayAssignments.docs.forEach((orderDoc) => {
+                    const order = orderDoc.data() as any;
+                    const status = String(order.status || '').toLowerCase();
+                    if (status === 'scheduled' || status === 'pending') {
+                        const officialId = order.assignedOfficialId;
+                        if (officialId) {
+                            loadByOfficial[officialId] = (loadByOfficial[officialId] || 0) + 1;
+                        }
+                    }
+                });
+
+                activeOfficials.sort((a, b) => {
+                    const aLoad = loadByOfficial[a.userId || a.id] || 0;
+                    const bLoad = loadByOfficial[b.userId || b.id] || 0;
+                    return aLoad - bLoad;
+                });
+
+                const selectedOfficial = activeOfficials[0];
+                assignedOfficialId = selectedOfficial.userId || selectedOfficial.id;
+                assignedOfficialName = selectedOfficial.displayName || assignedOfficialId;
+            }
+
             await addDoc(collection(firestore, 'orders'), {
                 userId,
+                residentName: profile?.name || currentUser?.displayName || 'Resident',
+                address: profile?.address || '',
                 type: 'Scrap/Recyclable Waste',
                 date: selectedDate.toLocaleDateString(),
+                dateKey: bookingDateKey,
                 time: timeString,
                 status: 'Scheduled',
+                assignedOfficialId,
+                assignedOfficialName,
+                assignmentStatus: assignedOfficialId ? 'assigned' : 'unassigned',
                 weight: '-',
                 points: '0 Points',
                 createdAt: Date.now(),
@@ -153,7 +210,12 @@ export default function HomeScreen() {
 
             setIsBooking(false);
             setActiveTab('orders');
-            Alert.alert('Success', 'Pickup scheduled successfully.');
+            Alert.alert(
+                'Success',
+                assignedOfficialName
+                    ? `Pickup scheduled and assigned to ${assignedOfficialName}.`
+                    : 'Pickup scheduled successfully. No available official is assigned yet.'
+            );
         } catch {
             Alert.alert('Error', 'Failed to schedule pickup. Please try again.');
         }
@@ -290,6 +352,12 @@ export default function HomeScreen() {
 
     const activeOrders = orders.filter((order) => order.status !== 'Cancelled' && order.status !== 'Completed');
     const historyOrders = orders.filter((order) => order.status === 'Cancelled' || order.status === 'Completed');
+    const completedOrders = orders.filter((order) => order.status === 'Completed');
+    const totalCollectedKg = completedOrders.reduce((acc, item) => acc + parseWeightKg(item.weight), 0);
+    const totalEcoPoints = completedOrders.reduce((acc, item) => {
+        const pointsValue = Number((item.points || '0').replace(/[^0-9]/g, ''));
+        return acc + (Number.isNaN(pointsValue) ? 0 : pointsValue);
+    }, 0);
 
     const handleLogout = async () => {
         try {
@@ -430,6 +498,9 @@ export default function HomeScreen() {
                         isLogoutConfirmModalVisible={isLogoutConfirmModalVisible}
                         setIsLogoutConfirmModalVisible={setIsLogoutConfirmModalVisible}
                         confirmLogout={confirmLogout}
+                        completedCount={completedOrders.length}
+                        collectedKg={totalCollectedKg}
+                        ecoPoints={totalEcoPoints}
                     />
                 )}
 
@@ -1092,6 +1163,9 @@ const ProfileContent = ({
     isLogoutConfirmModalVisible,
     setIsLogoutConfirmModalVisible,
     confirmLogout,
+    completedCount,
+    collectedKg,
+    ecoPoints,
 }: {
     profile: ResidentProfile | null;
     loading: boolean;
@@ -1111,6 +1185,9 @@ const ProfileContent = ({
     isLogoutConfirmModalVisible: boolean;
     setIsLogoutConfirmModalVisible: (visible: boolean) => void;
     confirmLogout: () => void;
+    completedCount: number;
+    collectedKg: number;
+    ecoPoints: number;
 }) => {
     const displayName = profile?.name || 'Resident';
     const displayEmail = profile?.email || 'No email available';
@@ -1148,17 +1225,17 @@ const ProfileContent = ({
                     <Text style={styles.sectionTitle}>Your Impact</Text>
                     <View style={styles.statsContainer}>
                         <View style={styles.statBox}>
-                            <Text style={styles.statValue}>45</Text>
+                            <Text style={styles.statValue}>{collectedKg.toFixed(2)}</Text>
                             <Text style={styles.statLabel}>kg Collected</Text>
                         </View>
                         <View style={styles.statDivider} />
                         <View style={styles.statBox}>
-                            <Text style={styles.statValue}>12</Text>
+                            <Text style={styles.statValue}>{completedCount}</Text>
                             <Text style={styles.statLabel}>Pickups</Text>
                         </View>
                         <View style={styles.statDivider} />
                         <View style={styles.statBox}>
-                            <Text style={styles.statValue}>120</Text>
+                            <Text style={styles.statValue}>{ecoPoints}</Text>
                             <Text style={styles.statLabel}>Eco-Points</Text>
                         </View>
                     </View>

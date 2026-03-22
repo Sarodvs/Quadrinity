@@ -1,19 +1,17 @@
 // Real Firebase Auth Service
 // This service simulates OTP authentication and login with Firebase
 
+import { auth } from '@/firebase';
 import {
     ConfirmationResult,
     createUserWithEmailAndPassword,
     signOut as firebaseSignOut,
-    PhoneAuthProvider,
     RecaptchaVerifier,
-    signInWithCredential,
     signInWithEmailAndPassword,
     signInWithPhoneNumber,
 } from 'firebase/auth';
-import { doc, getFirestore, setDoc } from 'firebase/firestore';
+import { doc, getDoc, getFirestore, setDoc } from 'firebase/firestore';
 import { Platform } from 'react-native';
-import { auth } from '../firebase';
 
 const firestore = getFirestore();
 
@@ -34,6 +32,14 @@ interface LoginResult {
     user?: { id: string; email?: string; displayName?: string };
     error?: string;
 }
+
+const DEMO_OFFICIALS: Record<string, { password: string; displayName: string }> = {
+    OFF001: { password: 'Green@123', displayName: 'Arun Kumar' },
+    OFF002: { password: 'Clean@234', displayName: 'Meera Nair' },
+    OFF003: { password: 'Recycle@345', displayName: 'Rahul Das' },
+    OFF004: { password: 'EcoDrive@456', displayName: 'Anjali Menon' },
+    OFF005: { password: 'WasteLess@567', displayName: 'Vikram Pillai' },
+};
 
 const authService = {
     /**
@@ -168,6 +174,79 @@ const authService = {
     },
 
     /**
+     * Login for officials using preexisting userId + password credentials.
+     */
+    loginOfficialWithCredentials: async (userId: string, password: string): Promise<LoginResult> => {
+        try {
+            const normalizedUserId = (userId || '').trim().toUpperCase();
+            const normalizedPassword = (password || '').trim();
+
+            if (!normalizedUserId || !normalizedPassword) {
+                return { success: false, error: 'Official User ID and password are required.' };
+            }
+
+            const officialRef = doc(firestore, 'officials', normalizedUserId);
+            const officialSnap = await getDoc(officialRef);
+
+            if (officialSnap.exists()) {
+                const officialData = officialSnap.data() as {
+                    userId?: string;
+                    password?: string;
+                    displayName?: string;
+                    isActive?: boolean;
+                };
+
+                if (officialData.isActive === false) {
+                    return { success: false, error: 'This official account is inactive.' };
+                }
+
+                if (!officialData.password || officialData.password !== normalizedPassword) {
+                    return { success: false, error: 'Invalid official credentials.' };
+                }
+
+                return {
+                    success: true,
+                    user: {
+                        id: officialData.userId || normalizedUserId,
+                        displayName: officialData.displayName || normalizedUserId,
+                    },
+                };
+            }
+
+            const matchedOfficial = DEMO_OFFICIALS[normalizedUserId];
+            if (!matchedOfficial || matchedOfficial.password !== normalizedPassword) {
+                return { success: false, error: 'Invalid official credentials.' };
+            }
+
+            await setDoc(
+                officialRef,
+                {
+                    userId: normalizedUserId,
+                    password: matchedOfficial.password,
+                    displayName: matchedOfficial.displayName,
+                    isActive: true,
+                    isSeededDemo: true,
+                    updatedAt: Date.now(),
+                },
+                { merge: true }
+            );
+
+            return {
+                success: true,
+                user: {
+                    id: normalizedUserId,
+                    displayName: matchedOfficial.displayName,
+                },
+            };
+        } catch (error: any) {
+            return {
+                success: false,
+                error: error.message || 'Failed to login official user.',
+            };
+        }
+    },
+
+    /**
      * Register with Email and Password
      */
     registerWithEmailAndPassword: async (userData: any): Promise<LoginResult> => {
@@ -176,7 +255,7 @@ const authService = {
             if (regResult.success && regResult.verificationId) {
                 return {
                     success: true,
-                    user: { id: regResult.verificationId, email: userData.email, displayName: userData.name || userData.email.split("@")[0] }
+                    user: { id: regResult.verificationId, email: userData.email, displayName: userData.name || userData.email.split('@')[0] }
                 };
             }
             return { success: false, error: regResult.error };

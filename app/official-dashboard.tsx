@@ -1,15 +1,15 @@
-import { auth as firebaseAuth } from '@/app/firebase';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useAuth } from '@/context/AuthContext';
+import { auth as firebaseAuth } from '@/firebase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { doc, getDoc, getFirestore, updateDoc, collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getDoc, getFirestore, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     Dimensions,
-    Image,
     Keyboard,
     KeyboardAvoidingView,
     Linking,
@@ -26,7 +26,6 @@ import {
     TouchableWithoutFeedback,
     View
 } from 'react-native';
-import { useAuth } from './context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
 
@@ -37,6 +36,41 @@ const NAV_ITEMS = [
     { id: 'payment', label: 'Payment', icon: 'bank-outline', iconActive: 'bank' },
     { id: 'settings', label: 'Settings', icon: 'cog-outline', iconActive: 'cog' },
 ];
+
+const toDateKey = (value: Date) => value.toISOString().split('T')[0];
+
+const parseDateKey = (dateValue: string | undefined) => {
+    if (!dateValue) return '';
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+        return dateValue;
+    }
+
+    const parsed = new Date(dateValue);
+    if (Number.isNaN(parsed.getTime())) {
+        return '';
+    }
+
+    return toDateKey(parsed);
+};
+
+interface PlannedCollection {
+    id: string;
+    residentName: string;
+    address: string;
+    status: string;
+    type: string;
+    time: string;
+    date: string;
+    dateKey: string;
+}
+
+const parseWeightKg = (weight: string | number | undefined) => {
+    if (typeof weight === 'number') return weight;
+    if (!weight) return 0;
+    const numericValue = parseFloat(String(weight).replace(/[^0-9.]/g, ''));
+    return Number.isNaN(numericValue) ? 0 : numericValue;
+};
 
 export default function OfficialDashboardScreen() {
     const [activeTab, setActiveTab] = useState('home');
@@ -83,9 +117,9 @@ export default function OfficialDashboardScreen() {
 
                 {activeTab === 'home' && <HomeContent currentUser={currentUser} onLogout={handleLogout} onScanQR={openScanner} />}
                 {activeTab === 'availability' && <AvailabilityContent currentUser={currentUser} />}
-                {activeTab === 'schedule' && <ScheduleContent onScanQR={openScanner} />}
+                {activeTab === 'schedule' && <ScheduleContent currentUser={currentUser} onScanQR={openScanner} />}
                 {activeTab === 'payment' && <PaymentContent />}
-                {activeTab === 'settings' && <SettingsContent currentUser={currentUser} />}
+                {activeTab === 'settings' && <SettingsContent currentUser={currentUser} onOpenHistory={() => router.push('/official-history' as any)} />}
 
                 {/* QR Scanner Modal */}
                 <Modal visible={isScannerVisible} transparent animationType="slide" onRequestClose={() => setIsScannerVisible(false)}>
@@ -151,9 +185,7 @@ export default function OfficialDashboardScreen() {
 const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
     const [isDutyActive, setIsDutyActive] = useState(false);
     const [loadingDuty, setLoadingDuty] = useState(false);
-
-    // Mock stats
-    const stats = { pending: 12, completed: 8, collected: '45 kg' };
+    const [stats, setStats] = useState({ pending: 0, completed: 0, collected: '0.00 kg' });
 
     useEffect(() => {
         const fetchDutyStatus = async () => {
@@ -161,7 +193,7 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
             if (!userId) return;
             try {
                 const firestore = getFirestore();
-                const userRef = doc(firestore, 'users', userId);
+                const userRef = doc(firestore, 'officials', userId);
                 const userSnap = await getDoc(userRef);
                 if (userSnap.exists()) {
                     setIsDutyActive(userSnap.data().isDutyActive || false);
@@ -171,6 +203,43 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
             }
         };
         fetchDutyStatus();
+    }, [currentUser]);
+
+    useEffect(() => {
+        const userId = currentUser?.id || firebaseAuth.currentUser?.uid;
+        if (!userId) {
+            setStats({ pending: 0, completed: 0, collected: '0.00 kg' });
+            return;
+        }
+
+        const firestore = getFirestore();
+        const assignedOrdersQuery = query(collection(firestore, 'orders'), where('assignedOfficialId', '==', userId));
+
+        const unsubscribe = onSnapshot(assignedOrdersQuery, (snapshot) => {
+            let pendingCount = 0;
+            let completedCount = 0;
+            let totalCollectedKg = 0;
+
+            snapshot.docs.forEach((orderDoc) => {
+                const data = orderDoc.data() as any;
+                const status = String(data.status || '').toLowerCase();
+                if (status === 'scheduled' || status === 'pending') {
+                    pendingCount += 1;
+                }
+                if (status === 'completed') {
+                    completedCount += 1;
+                    totalCollectedKg += parseWeightKg(data.weight);
+                }
+            });
+
+            setStats({
+                pending: pendingCount,
+                completed: completedCount,
+                collected: `${totalCollectedKg.toFixed(2)} kg`,
+            });
+        });
+
+        return () => unsubscribe();
     }, [currentUser]);
 
     const toggleDutyStatus = async (value: boolean) => {
@@ -183,8 +252,8 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
         setIsDutyActive(value);
         try {
             const firestore = getFirestore();
-            const userRef = doc(firestore, 'users', userId);
-            await updateDoc(userRef, { isDutyActive: value });
+            const userRef = doc(firestore, 'officials', userId);
+            await setDoc(userRef, { isDutyActive: value, userId, updatedAt: Date.now() }, { merge: true });
         } catch (error) {
             setIsDutyActive(!value); // Revert on failure
             Alert.alert('Error', 'Failed to update duty status.');
@@ -284,27 +353,35 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
 
 // --- Availability Content ---
 const AvailabilityContent = ({ currentUser }: any) => {
-    // A simple mock calendar view using a week/month grid.
     const [selectedDays, setSelectedDays] = useState<string[]>([]);
+    const [activeMonthDate, setActiveMonthDate] = useState(() => {
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth(), 1);
+    });
     const [isSaving, setIsSaving] = useState(false);
 
-    // Mock days for demonstration (e.g., next 14 days)
-    const generateDays = () => {
-        const days = [];
-        const today = new Date();
-        for (let i = 0; i < 14; i++) {
-            const d = new Date(today);
-            d.setDate(today.getDate() + i);
-            days.push({
-                dateString: d.toISOString().split('T')[0],
-                dayName: d.toLocaleDateString('en-US', { weekday: 'short' }),
-                dayNumber: d.getDate()
+    const monthKey = `${activeMonthDate.getFullYear()}-${String(activeMonthDate.getMonth() + 1).padStart(2, '0')}`;
+
+    const generateMonthDays = () => {
+        const year = activeMonthDate.getFullYear();
+        const month = activeMonthDate.getMonth();
+        const totalDays = new Date(year, month + 1, 0).getDate();
+        const values = [];
+
+        for (let day = 1; day <= totalDays; day++) {
+            const dateValue = new Date(year, month, day);
+            values.push({
+                dateString: toDateKey(dateValue),
+                dayName: dateValue.toLocaleDateString('en-US', { weekday: 'short' }),
+                dayNumber: day,
             });
         }
-        return days;
+
+        return values;
     };
 
-    const availableDays = generateDays();
+    const monthDays = generateMonthDays();
+    const balanceDays = monthDays.length - selectedDays.length;
 
     useEffect(() => {
         const fetchAvailability = async () => {
@@ -312,17 +389,21 @@ const AvailabilityContent = ({ currentUser }: any) => {
             if (!userId) return;
             try {
                 const firestore = getFirestore();
-                const userRef = doc(firestore, 'users', userId);
-                const userSnap = await getDoc(userRef);
-                if (userSnap.exists() && userSnap.data().availableDays) {
-                    setSelectedDays(userSnap.data().availableDays);
-                }
+                const officialRef = doc(firestore, 'officials', userId);
+                const officialSnap = await getDoc(officialRef);
+                const monthAvailability = officialSnap.data()?.availabilityByMonth?.[monthKey] || [];
+                setSelectedDays(Array.isArray(monthAvailability) ? monthAvailability : []);
             } catch (error) {
                 console.error('Error fetching availability', error);
             }
         };
+
         fetchAvailability();
-    }, [currentUser]);
+    }, [currentUser, monthKey]);
+
+    const moveMonth = (offset: number) => {
+        setActiveMonthDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + offset, 1));
+    };
 
     const toggleDay = (dateString: string) => {
         if (selectedDays.includes(dateString)) {
@@ -338,8 +419,18 @@ const AvailabilityContent = ({ currentUser }: any) => {
         setIsSaving(true);
         try {
             const firestore = getFirestore();
-            const userRef = doc(firestore, 'users', userId);
-            await updateDoc(userRef, { availableDays: selectedDays });
+            const officialRef = doc(firestore, 'officials', userId);
+            await setDoc(
+                officialRef,
+                {
+                    userId,
+                    availabilityByMonth: {
+                        [monthKey]: selectedDays,
+                    },
+                    updatedAt: Date.now(),
+                },
+                { merge: true }
+            );
             Alert.alert('Success', 'Availability updated successfully.');
         } catch (error) {
             Alert.alert('Error', 'Failed to save availability.');
@@ -356,12 +447,33 @@ const AvailabilityContent = ({ currentUser }: any) => {
                 style={[styles.headerGradient, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
             >
                 <Text style={[styles.headerTitle, { alignSelf: 'center' }]}>My Availability</Text>
-                <Text style={styles.headerSubtitle}>Select days you are available for pickups</Text>
+                <Text style={styles.headerSubtitle}>Select available dates for a specific month</Text>
             </LinearGradient>
 
             <View style={styles.contentSection}>
+                <View style={styles.monthHeaderRow}>
+                    <TouchableOpacity style={styles.monthNavButton} onPress={() => moveMonth(-1)}>
+                        <MaterialCommunityIcons name="chevron-left" size={20} color="#00c853" />
+                    </TouchableOpacity>
+                    <Text style={styles.monthTitle}>{activeMonthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                    <TouchableOpacity style={styles.monthNavButton} onPress={() => moveMonth(1)}>
+                        <MaterialCommunityIcons name="chevron-right" size={20} color="#00c853" />
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.monthSummaryRow}>
+                    <View style={styles.monthSummaryCard}>
+                        <Text style={styles.monthSummaryLabel}>Selected Dates</Text>
+                        <Text style={styles.monthSummaryValue}>{selectedDays.length}</Text>
+                    </View>
+                    <View style={styles.monthSummaryCard}>
+                        <Text style={styles.monthSummaryLabel}>Balance This Month</Text>
+                        <Text style={styles.monthSummaryValue}>{balanceDays}</Text>
+                    </View>
+                </View>
+
                 <View style={styles.calendarGrid}>
-                    {availableDays.map((day, idx) => {
+                    {monthDays.map((day, idx) => {
                         const isSelected = selectedDays.includes(day.dateString);
                         return (
                             <TouchableOpacity
@@ -395,18 +507,115 @@ const AvailabilityContent = ({ currentUser }: any) => {
 };
 
 // --- Schedule Content ---
-const ScheduleContent = ({ onScanQR }: any) => {
+const ScheduleContent = ({ currentUser, onScanQR }: any) => {
+    const [scheduleMonthDate, setScheduleMonthDate] = useState(() => {
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth(), 1);
+    });
+    const [plannedCollections, setPlannedCollections] = useState<PlannedCollection[]>([]);
+    const [availableDaysInMonth, setAvailableDaysInMonth] = useState<string[]>([]);
+    const [isScheduleLoading, setIsScheduleLoading] = useState(true);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [selectedCollection, setSelectedCollection] = useState<any>(null);
     const [wasteQuantity, setWasteQuantity] = useState('');
     const [selectedWasteType, setSelectedWasteType] = useState('Scrap/Recyclable');
+    const [isCompleting, setIsCompleting] = useState(false);
 
-    // Mock scheduled collections
-    const plannedCollections = [
-        { id: '1', residentName: 'John Doe', address: '123 Palm Street, Block A', status: 'Pending', type: 'Scrap/Recyclable', time: '10:00 AM - 12:00 PM' },
-        { id: '2', residentName: 'Jane Smith', address: '456 Oak Avenue, Block B', status: 'Pending', type: 'Food Waste', time: '01:00 PM - 03:00 PM' },
-        { id: '3', residentName: 'Alice Johnson', address: '789 Pine Road, Block C', status: 'Pending', type: 'Scrap/Recyclable', time: '03:30 PM - 05:00 PM' },
-    ];
+    const scheduleMonthKey = `${scheduleMonthDate.getFullYear()}-${String(scheduleMonthDate.getMonth() + 1).padStart(2, '0')}`;
+
+    const moveScheduleMonth = (offset: number) => {
+        setScheduleMonthDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + offset, 1));
+    };
+
+    const getMiniCalendarDays = () => {
+        const year = scheduleMonthDate.getFullYear();
+        const month = scheduleMonthDate.getMonth();
+        const firstWeekday = new Date(year, month, 1).getDay();
+        const totalDays = new Date(year, month + 1, 0).getDate();
+        const cells: Array<number | null> = [];
+
+        for (let i = 0; i < firstWeekday; i++) {
+            cells.push(null);
+        }
+        for (let day = 1; day <= totalDays; day++) {
+            cells.push(day);
+        }
+
+        return cells;
+    };
+
+    const appointmentDaySet = new Set(
+        plannedCollections.map((item) => Number(item.dateKey.slice(8, 10))).filter((value) => !Number.isNaN(value))
+    );
+    const availableDaySet = new Set(
+        availableDaysInMonth.map((value) => Number(value.slice(8, 10))).filter((day) => !Number.isNaN(day))
+    );
+    const miniCalendarCells = getMiniCalendarDays();
+
+    useEffect(() => {
+        const userId = currentUser?.id || firebaseAuth.currentUser?.uid;
+        if (!userId) {
+            setIsScheduleLoading(false);
+            setPlannedCollections([]);
+            return;
+        }
+
+        const firestore = getFirestore();
+        const officialRef = doc(firestore, 'officials', userId);
+        const ordersRef = query(collection(firestore, 'orders'), where('assignedOfficialId', '==', userId));
+
+        const unsubscribe = onSnapshot(
+            ordersRef,
+            async (ordersSnap) => {
+                try {
+                    const officialSnap = await getDoc(officialRef);
+                    const availabilityByMonth = officialSnap.data()?.availabilityByMonth || {};
+                    const availableDateKeysForMonth = availabilityByMonth[scheduleMonthKey] || [];
+                    const availableDateSet = new Set(
+                        Array.isArray(availableDateKeysForMonth) ? availableDateKeysForMonth : []
+                    );
+
+                    setAvailableDaysInMonth(Array.from(availableDateSet));
+
+                    const mappedCollections: PlannedCollection[] = ordersSnap.docs
+                        .map((orderDoc) => {
+                            const orderData = orderDoc.data() as any;
+                            const dateKey = parseDateKey(orderData.dateKey || orderData.date);
+                            return {
+                                id: orderDoc.id,
+                                residentName: orderData.residentName || 'Resident',
+                                address: orderData.address || 'Address not provided',
+                                status: orderData.status || 'Scheduled',
+                                type: orderData.type || 'Scrap/Recyclable Waste',
+                                time: orderData.time || 'Time not provided',
+                                date: orderData.date || (dateKey ? new Date(dateKey).toLocaleDateString() : 'Date not provided'),
+                                dateKey,
+                            };
+                        })
+                        .filter((order) => {
+                            const activeStatus = (order.status || '').toLowerCase();
+                            return (
+                                (activeStatus === 'scheduled' || activeStatus === 'pending') &&
+                                !!order.dateKey &&
+                                order.dateKey.startsWith(scheduleMonthKey) &&
+                                availableDateSet.has(order.dateKey)
+                            );
+                        })
+                        .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+
+                    setPlannedCollections(mappedCollections);
+                } finally {
+                    setIsScheduleLoading(false);
+                }
+            },
+            () => {
+                setIsScheduleLoading(false);
+                Alert.alert('Error', 'Unable to load schedule right now.');
+            }
+        );
+
+        return () => unsubscribe();
+    }, [currentUser, scheduleMonthKey]);
 
     const handleNavigate = (address: string) => {
         const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
@@ -425,13 +634,42 @@ const ScheduleContent = ({ onScanQR }: any) => {
         setSelectedCollection(null);
     };
 
-    const completeAndPay = () => {
+    const completeAndPay = async () => {
         if (!wasteQuantity) {
             Alert.alert('Error', 'Please enter waste quantity');
             return;
         }
-        Alert.alert('Success', `Collection from ${selectedCollection?.residentName} marked as complete and payment initiated.`);
-        closeModal();
+
+        if (!selectedCollection?.id) {
+            Alert.alert('Error', 'Unable to identify this collection record.');
+            return;
+        }
+
+        const completedBy = currentUser?.id || firebaseAuth.currentUser?.uid;
+        if (!completedBy) {
+            Alert.alert('Error', 'Official user is not authenticated.');
+            return;
+        }
+
+        setIsCompleting(true);
+        try {
+            const firestore = getFirestore();
+            await updateDoc(doc(firestore, 'orders', selectedCollection.id), {
+                status: 'Completed',
+                type: selectedWasteType,
+                weight: `${wasteQuantity} kg`,
+                completedAt: Date.now(),
+                completedBy,
+                updatedAt: Date.now(),
+            });
+
+            Alert.alert('Success', `Collection from ${selectedCollection?.residentName} marked as completed.`);
+            closeModal();
+        } catch {
+            Alert.alert('Error', 'Failed to mark pickup as completed.');
+        } finally {
+            setIsCompleting(false);
+        }
     };
 
     return (
@@ -442,11 +680,67 @@ const ScheduleContent = ({ onScanQR }: any) => {
                 style={[styles.headerGradient, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
             >
                 <Text style={[styles.headerTitle, { alignSelf: 'center' }]}>Today's Schedule</Text>
-                <Text style={styles.headerSubtitle}>{plannedCollections.length} collections planned</Text>
+                <Text style={styles.headerSubtitle}>{plannedCollections.length} collections in selected month</Text>
             </LinearGradient>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 <View style={[styles.contentSection, { paddingTop: 16 }]}>
+                    <View style={styles.scheduleMonthCard}>
+                        <View style={styles.monthHeaderRow}>
+                            <TouchableOpacity style={styles.monthNavButton} onPress={() => moveScheduleMonth(-1)}>
+                                <MaterialCommunityIcons name="chevron-left" size={20} color="#00c853" />
+                            </TouchableOpacity>
+                            <Text style={styles.monthTitle}>{scheduleMonthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
+                            <TouchableOpacity style={styles.monthNavButton} onPress={() => moveScheduleMonth(1)}>
+                                <MaterialCommunityIcons name="chevron-right" size={20} color="#00c853" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.weekdayRow}>
+                            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
+                                <Text key={`${day}-${index}`} style={styles.weekdayText}>{day}</Text>
+                            ))}
+                        </View>
+
+                        <View style={styles.miniCalendarGrid}>
+                            {miniCalendarCells.map((day, index) => {
+                                if (day === null) {
+                                    return <View key={`blank-${index}`} style={styles.miniCalendarBlank} />;
+                                }
+
+                                const hasAppointment = appointmentDaySet.has(day);
+                                const isAvailable = availableDaySet.has(day);
+
+                                return (
+                                    <View
+                                        key={`day-${day}-${index}`}
+                                        style={[
+                                            styles.miniCalendarDay,
+                                            isAvailable && styles.miniCalendarAvailable,
+                                            hasAppointment && styles.miniCalendarHasAppointment,
+                                        ]}
+                                    >
+                                        <Text style={[styles.miniCalendarDayText, hasAppointment && styles.miniCalendarDayTextActive]}>{day}</Text>
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    </View>
+
+                    {isScheduleLoading && (
+                        <View style={styles.scheduleEmptyState}>
+                            <ActivityIndicator size="small" color="#00c853" />
+                            <Text style={styles.scheduleEmptyText}>Loading schedule...</Text>
+                        </View>
+                    )}
+
+                    {!isScheduleLoading && plannedCollections.length === 0 && (
+                        <View style={styles.scheduleEmptyState}>
+                            <MaterialCommunityIcons name="calendar-remove-outline" size={30} color="#7b8a9e" />
+                            <Text style={styles.scheduleEmptyText}>No assigned appointments match this month and your availability.</Text>
+                        </View>
+                    )}
+
                     {plannedCollections.map((item) => (
                         <View key={item.id} style={styles.collectionCard}>
                             <View style={styles.collectionHeader}>
@@ -454,6 +748,11 @@ const ScheduleContent = ({ onScanQR }: any) => {
                                 <View style={styles.statusBadge}>
                                     <Text style={styles.statusText}>{item.status}</Text>
                                 </View>
+                            </View>
+
+                            <View style={styles.collectionDetailRow}>
+                                <MaterialCommunityIcons name="calendar-month-outline" size={16} color="#7b8a9e" />
+                                <Text style={styles.collectionDetailText}>{item.date}</Text>
                             </View>
                             
                             <View style={styles.collectionDetailRow}>
@@ -534,8 +833,12 @@ const ScheduleContent = ({ onScanQR }: any) => {
                                 </View>
 
                                 <TouchableOpacity onPress={completeAndPay} activeOpacity={0.8} style={{ marginTop: 20 }}>
-                                    <LinearGradient colors={['#00c853', '#1b8a2a']} style={styles.actionButton}>
-                                        <Text style={styles.actionButtonText}>Complete & Pay</Text>
+                                    <LinearGradient colors={isCompleting ? ['#16362a', '#0e2419'] : ['#00c853', '#1b8a2a']} style={styles.actionButton}>
+                                        {isCompleting ? (
+                                            <ActivityIndicator size="small" color="#FFFFFF" />
+                                        ) : (
+                                            <Text style={styles.actionButtonText}>Complete & Pay</Text>
+                                        )}
                                     </LinearGradient>
                                 </TouchableOpacity>
                             </ScrollView>
@@ -548,7 +851,7 @@ const ScheduleContent = ({ onScanQR }: any) => {
 };
 
 // --- Settings Content ---
-const SettingsContent = ({ currentUser }: any) => {
+const SettingsContent = ({ currentUser, onOpenHistory }: any) => {
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <LinearGradient
@@ -593,6 +896,14 @@ const SettingsContent = ({ currentUser }: any) => {
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         <MaterialCommunityIcons name="help-circle-outline" size={24} color="#7b8a9e" />
                         <Text style={styles.settingText}>Help & Support</Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={24} color="#7b8a9e" />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.settingRow} onPress={onOpenHistory}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <MaterialCommunityIcons name="history" size={24} color="#7b8a9e" />
+                        <Text style={styles.settingText}>View Pickup History</Text>
                     </View>
                     <MaterialCommunityIcons name="chevron-right" size={24} color="#7b8a9e" />
                 </TouchableOpacity>
@@ -828,6 +1139,106 @@ const styles = StyleSheet.create({
     },
 
     // Availability Calendar Custom Grid
+    monthHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 16,
+    },
+    monthNavButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: '#1e3325',
+        backgroundColor: '#0c1e14',
+    },
+    monthTitle: {
+        fontSize: 17,
+        fontWeight: '700',
+        color: '#d0d8e4',
+    },
+    monthSummaryRow: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 16,
+    },
+    monthSummaryCard: {
+        flex: 1,
+        backgroundColor: '#0c1e14',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#1e3325',
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+    },
+    monthSummaryLabel: {
+        fontSize: 12,
+        color: '#7b8a9e',
+    },
+    monthSummaryValue: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#00c853',
+        marginTop: 4,
+    },
+    scheduleMonthCard: {
+        backgroundColor: '#0c1e14',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#1e3325',
+        padding: 12,
+        marginBottom: 14,
+    },
+    weekdayRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+        paddingHorizontal: 2,
+    },
+    weekdayText: {
+        width: '14.2%',
+        textAlign: 'center',
+        fontSize: 12,
+        color: '#7b8a9e',
+        fontWeight: '700',
+    },
+    miniCalendarGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        rowGap: 6,
+    },
+    miniCalendarBlank: {
+        width: '14.2%',
+        height: 30,
+    },
+    miniCalendarDay: {
+        width: '14.2%',
+        height: 30,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'transparent',
+    },
+    miniCalendarAvailable: {
+        borderColor: '#2e6d4a',
+        backgroundColor: 'rgba(0,200,83,0.08)',
+    },
+    miniCalendarHasAppointment: {
+        backgroundColor: 'rgba(0,200,83,0.18)',
+        borderColor: '#00c853',
+    },
+    miniCalendarDayText: {
+        color: '#9db0c4',
+        fontSize: 12,
+    },
+    miniCalendarDayTextActive: {
+        color: '#00c853',
+        fontWeight: '700',
+    },
     calendarGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -871,6 +1282,24 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#1e3325',
         marginBottom: 16,
+    },
+    scheduleEmptyState: {
+        borderWidth: 1,
+        borderColor: '#1e3325',
+        borderRadius: 12,
+        backgroundColor: '#0c1e14',
+        paddingVertical: 20,
+        paddingHorizontal: 16,
+        marginBottom: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+    },
+    scheduleEmptyText: {
+        fontSize: 14,
+        color: '#7b8a9e',
+        textAlign: 'center',
+        lineHeight: 20,
     },
     collectionHeader: {
         flexDirection: 'row',

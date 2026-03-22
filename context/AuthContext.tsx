@@ -1,5 +1,5 @@
+import authService from '@/services/authService';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import authService from '../services/authService';
 
 interface User {
     id: string;
@@ -13,6 +13,7 @@ interface AuthContextType {
     loading: boolean;
     isAuthenticated: boolean;
     login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    loginOfficial: (userId: string, password: string) => Promise<{ success: boolean; error?: string }>;
     register: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
     logout: () => Promise<void>;
     verifyOTPAndLogin?: (verificationId: string, otpCode: string, officialId: string) => Promise<{ success: boolean; error?: string }>;
@@ -23,6 +24,7 @@ const AuthContext = createContext<AuthContextType>({
     loading: false,
     isAuthenticated: false,
     login: async () => ({ success: false }),
+    loginOfficial: async () => ({ success: false }),
     register: async () => ({ success: false }),
     logout: async () => {},
     verifyOTPAndLogin: async () => ({ success: false }),
@@ -82,6 +84,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
+    const loginOfficial = async (userId: string, password: string) => {
+        setLoading(true);
+        try {
+            const result = await authService.loginOfficialWithCredentials(userId, password);
+            if (result.success && result.user) {
+                setCurrentUser({
+                    id: result.user.id,
+                    email: result.user.email,
+                    displayName: result.user.displayName,
+                });
+                return { success: true };
+            }
+            return { success: false, error: result.error };
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const verifyOTPAndLogin = async (verificationId: string, otpCode: string, officialId: string) => {
         setLoading(true);
         try {
@@ -114,6 +134,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         isAuthenticated: currentUser !== null,
         login,
+        loginOfficial,
         register,
         logout,
         verifyOTPAndLogin,

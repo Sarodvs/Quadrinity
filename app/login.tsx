@@ -1,3 +1,6 @@
+import { ADMIN_PANEL_PASSWORD } from '@/constants/security';
+import { useAuth } from '@/context/AuthContext';
+import authService from '@/services/authService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -21,8 +24,6 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from './context/AuthContext';
-import authService from './services/authService';
 
 
 const { height } = Dimensions.get('window');
@@ -36,6 +37,8 @@ export default function LoginScreen() {
     // Official Login State
     const [officialUserId, setOfficialUserId] = useState('');
     const [officialPassword, setOfficialPassword] = useState('');
+    const [isAdminAuthVisible, setIsAdminAuthVisible] = useState(false);
+    const [adminPasswordInput, setAdminPasswordInput] = useState('');
 
     // Registration Modal State
     const [isRegisterModalVisible, setRegisterModalVisible] = useState(false);
@@ -121,19 +124,14 @@ export default function LoginScreen() {
                 Alert.alert('Invalid', 'Please enter a valid email and password (minimum 6 characters).');
             }
         } else {
-            // Official Login Logic (OTP-based)
-            if (officialUserId) {
+            if (officialUserId && officialPassword) {
                 setIsLoading(true);
                 try {
-                    const result = await authService.sendOTP(officialUserId);
-
-                    if (result.success && result.verificationId) {
-                        router.push({
-                            pathname: '/official-verify-otp',
-                            params: { verificationId: result.verificationId, officialId: officialUserId },
-                        });
+                    const result = await auth.loginOfficial(officialUserId, officialPassword);
+                    if (result.success) {
+                        router.replace('/official-dashboard');
                     } else {
-                        Alert.alert('Error', result.error || 'Failed to send OTP');
+                        Alert.alert('Official Login Failed', result.error || 'Invalid official credentials.');
                     }
                 } catch (error: any) {
                     const errorMsg = error.message || 'An unexpected error occurred';
@@ -141,6 +139,8 @@ export default function LoginScreen() {
                 } finally {
                     setIsLoading(false);
                 }
+            } else {
+                Alert.alert('Missing details', 'Please enter official User ID and password.');
             }
         }
     };
@@ -149,9 +149,23 @@ export default function LoginScreen() {
         setEmail(text.trim());
     };
 
+    const handleOpenAdmin = () => {
+        setAdminPasswordInput('');
+        setIsAdminAuthVisible(true);
+    };
+
+    const handleAdminAuth = () => {
+        if (adminPasswordInput.trim() !== ADMIN_PANEL_PASSWORD) {
+            Alert.alert('Access denied', 'Invalid admin password.');
+            return;
+        }
+        setIsAdminAuthVisible(false);
+        router.push('/admin-officials' as any);
+    };
+
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const isResidentValid = emailRegex.test(email) && password.length > 0;
-    const isOfficialValid = officialUserId.length > 0;
+    const isOfficialValid = officialUserId.trim().length > 0 && officialPassword.length > 0;
     const isInputValid = activeTab === 'resident' ? isResidentValid : isOfficialValid;
 
     // Registration Logic
@@ -380,17 +394,31 @@ export default function LoginScreen() {
                         ) : (
                             <View>
                                 <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Official ID / Phone</Text>
+                                    <Text style={styles.label}>Official User ID</Text>
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="Enter Official ID or Phone Number"
+                                        placeholder="Enter Official User ID"
                                         placeholderTextColor="#7A8A99"
                                         value={officialUserId}
-                                        onChangeText={setOfficialUserId}
-                                        autoCapitalize="none"
-                                        keyboardType="phone-pad"
+                                        onChangeText={(value) => setOfficialUserId(value.toUpperCase())}
+                                        autoCapitalize="characters"
                                     />
                                 </View>
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.label}>Password</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Enter official password"
+                                        placeholderTextColor="#7A8A99"
+                                        value={officialPassword}
+                                        onChangeText={setOfficialPassword}
+                                        secureTextEntry
+                                        autoCapitalize="none"
+                                    />
+                                </View>
+                                <TouchableOpacity onPress={handleOpenAdmin}>
+                                    <Text style={styles.registerLink}>Manage Official Credentials (Admin)</Text>
+                                </TouchableOpacity>
                             </View>
                         )}
 
@@ -408,7 +436,7 @@ export default function LoginScreen() {
                                     <ActivityIndicator size="small" color="#FFFFFF" />
                                 ) : (
                                     <Text style={[styles.actionButtonText, !isInputValid && styles.actionButtonTextDisabled]}>
-                                        {activeTab === 'resident' ? 'Login' : 'Get OTP'}
+                                        {activeTab === 'resident' ? 'Login' : 'Official Login'}
                                     </Text>
                                 )}
                             </LinearGradient>
@@ -418,7 +446,7 @@ export default function LoginScreen() {
                         <View style={styles.infoBox}>
                             <MaterialCommunityIcons name="file-document-outline" size={18} color="#3d7a56" style={styles.infoIcon} />
                             <Text style={styles.infoText}>
-                                {activeTab === 'resident' ? 'Please log in with your email and password' : 'An OTP will be sent to your registered contact'}
+                                {activeTab === 'resident' ? 'Please log in with your email and password' : 'Use pre-issued official User ID and password'}
                             </Text>
                         </View>
 
@@ -597,6 +625,45 @@ export default function LoginScreen() {
                             </View>
                         </TouchableWithoutFeedback>
                     </KeyboardAvoidingView>
+                </Modal>
+
+                <Modal
+                    visible={isAdminAuthVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setIsAdminAuthVisible(false)}
+                >
+                    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                        <View style={styles.modalOverlay}>
+                            <View style={[styles.modalContent, { maxHeight: 320 }]}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>Admin Authentication</Text>
+                                    <TouchableOpacity onPress={() => setIsAdminAuthVisible(false)}>
+                                        <MaterialCommunityIcons name="close" size={24} color="#d0d8e4" />
+                                    </TouchableOpacity>
+                                </View>
+
+                                <View style={styles.modalInputGroup}>
+                                    <Text style={styles.modalLabel}>Admin Password</Text>
+                                    <TextInput
+                                        style={styles.modalInput}
+                                        value={adminPasswordInput}
+                                        onChangeText={setAdminPasswordInput}
+                                        secureTextEntry
+                                        autoCapitalize="none"
+                                        placeholder="Enter admin password"
+                                        placeholderTextColor="#7A8A99"
+                                    />
+                                </View>
+
+                                <TouchableOpacity onPress={handleAdminAuth} activeOpacity={0.8}>
+                                    <LinearGradient colors={['#00c853', '#1b8a2a']} style={styles.modalButton}>
+                                        <Text style={styles.modalButtonText}>Unlock Admin</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </TouchableWithoutFeedback>
                 </Modal>
             </View>
         </SafeAreaView>
