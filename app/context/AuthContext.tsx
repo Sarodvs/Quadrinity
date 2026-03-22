@@ -15,6 +15,7 @@ interface AuthContextType {
     login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
     register: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
     logout: () => Promise<void>;
+    verifyOTPAndLogin?: (verificationId: string, otpCode: string, officialId: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -24,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
     login: async () => ({ success: false }),
     register: async () => ({ success: false }),
     logout: async () => {},
+    verifyOTPAndLogin: async () => ({ success: false }),
 });
 
 export const useAuth = () => {
@@ -80,6 +82,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
+    const verifyOTPAndLogin = async (verificationId: string, otpCode: string, officialId: string) => {
+        setLoading(true);
+        try {
+            const result = await authService.verifyOTP(verificationId, otpCode);
+            if (result.success) {
+                setCurrentUser({
+                    id: officialId || 'mock-official-id',
+                    displayName: 'Official User',
+                });
+                return { success: true };
+            }
+            return { success: false, error: result.error };
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const logout = async () => {
         setLoading(true);
         try {
@@ -97,6 +116,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         register,
         logout,
+        verifyOTPAndLogin,
     };
 
     return (

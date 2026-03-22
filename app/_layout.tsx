@@ -38,6 +38,7 @@ export default function RootLayout() {
           <Stack.Screen name="official-verify-otp" />
           <Stack.Screen name="forgot-password" />
           <Stack.Screen name="home" />
+          <Stack.Screen name="official-dashboard" />
         </Stack>
 
         <StatusBar style="light" backgroundColor="#000000" />
