@@ -2,10 +2,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     Image,
     Keyboard,
-    SafeAreaView,
     StatusBar,
     StyleSheet,
     Text,

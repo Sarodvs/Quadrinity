@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, getFirestore, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     ActivityIndicator,
     Alert,
@@ -15,7 +16,6 @@ import {
     Linking,
     Modal,
     Platform,
-    SafeAreaView,
     ScrollView,
     StatusBar,
     StyleSheet,
@@ -33,7 +33,6 @@ const NAV_ITEMS = [
     { id: 'home', label: 'Home', icon: 'home-outline', iconActive: 'home' },
     { id: 'availability', label: 'Availability', icon: 'calendar-month-outline', iconActive: 'calendar-month' },
     { id: 'schedule', label: 'Schedule', icon: 'clipboard-text-outline', iconActive: 'clipboard-text' },
-    { id: 'payment', label: 'Payment', icon: 'bank-outline', iconActive: 'bank' },
     { id: 'settings', label: 'Settings', icon: 'cog-outline', iconActive: 'cog' },
 ];
 
@@ -54,6 +53,15 @@ const parseDateKey = (dateValue: string | undefined) => {
     return toDateKey(parsed);
 };
 
+const getWeekKey = (date = new Date()) => {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+};
+
 interface PlannedCollection {
     id: string;
     residentName: string;
@@ -63,6 +71,7 @@ interface PlannedCollection {
     time: string;
     date: string;
     dateKey: string;
+    paymentStatus?: string;
 }
 
 const parseWeightKg = (weight: string | number | undefined) => {
@@ -118,7 +127,6 @@ export default function OfficialDashboardScreen() {
                 {activeTab === 'home' && <HomeContent currentUser={currentUser} onLogout={handleLogout} onScanQR={openScanner} />}
                 {activeTab === 'availability' && <AvailabilityContent currentUser={currentUser} />}
                 {activeTab === 'schedule' && <ScheduleContent currentUser={currentUser} onScanQR={openScanner} />}
-                {activeTab === 'payment' && <PaymentContent />}
                 {activeTab === 'settings' && <SettingsContent currentUser={currentUser} onOpenHistory={() => router.push('/official-history' as any)} />}
 
                 {/* QR Scanner Modal */}
@@ -186,6 +194,7 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
     const [isDutyActive, setIsDutyActive] = useState(false);
     const [loadingDuty, setLoadingDuty] = useState(false);
     const [stats, setStats] = useState({ pending: 0, completed: 0, collected: '0.00 kg' });
+    const [pendingAddresses, setPendingAddresses] = useState<string[]>([]);
 
     useEffect(() => {
         const fetchDutyStatus = async () => {
@@ -219,12 +228,16 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
             let pendingCount = 0;
             let completedCount = 0;
             let totalCollectedKg = 0;
+            const addresses: string[] = [];
 
             snapshot.docs.forEach((orderDoc) => {
                 const data = orderDoc.data() as any;
                 const status = String(data.status || '').toLowerCase();
                 if (status === 'scheduled' || status === 'pending') {
                     pendingCount += 1;
+                    if (data.address) {
+                        addresses.push(data.address);
+                    }
                 }
                 if (status === 'completed') {
                     completedCount += 1;
@@ -237,6 +250,7 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
                 completed: completedCount,
                 collected: `${totalCollectedKg.toFixed(2)} kg`,
             });
+            setPendingAddresses(addresses);
         });
 
         return () => unsubscribe();
@@ -267,7 +281,25 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
     };
 
     const handleNavigateAll = () => {
-        Alert.alert('Navigate', 'Generating optimized route via Google Maps to all pickups... (Placeholder)');
+        if (pendingAddresses.length === 0) {
+            Alert.alert('No Pickups', 'There are no pending pickups to navigate to.');
+            return;
+        }
+
+        const destination = pendingAddresses[pendingAddresses.length - 1];
+        const waypointsList = pendingAddresses.slice(0, -1);
+        
+        let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+        
+        if (waypointsList.length > 0) {
+            // Using optimize:true to find the shortest path between waypoints
+            const waypointsStr = `optimize:true|${waypointsList.join('|')}`;
+            url += `&waypoints=${encodeURIComponent(waypointsStr)}`;
+        }
+
+        Linking.openURL(url).catch(() => {
+            Alert.alert('Error', 'Could not open Google Maps.');
+        });
     };
 
     return (
@@ -360,7 +392,11 @@ const AvailabilityContent = ({ currentUser }: any) => {
     });
     const [isSaving, setIsSaving] = useState(false);
 
+
     const monthKey = `${activeMonthDate.getFullYear()}-${String(activeMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    const [commonPoint, setCommonPoint] = useState('');
+    const [isSavingPoint, setIsSavingPoint] = useState(false);
+    const currentWeekKey = getWeekKey();
 
     const generateMonthDays = () => {
         const year = activeMonthDate.getFullYear();
@@ -391,15 +427,20 @@ const AvailabilityContent = ({ currentUser }: any) => {
                 const firestore = getFirestore();
                 const officialRef = doc(firestore, 'officials', userId);
                 const officialSnap = await getDoc(officialRef);
-                const monthAvailability = officialSnap.data()?.availabilityByMonth?.[monthKey] || [];
+                const data = officialSnap.data();
+                
+                const monthAvailability = data?.availabilityByMonth?.[monthKey] || [];
                 setSelectedDays(Array.isArray(monthAvailability) ? monthAvailability : []);
+                
+                const weeklyPoints = data?.commonPoints || {};
+                setCommonPoint(weeklyPoints[currentWeekKey] || '');
             } catch (error) {
                 console.error('Error fetching availability', error);
             }
         };
 
         fetchAvailability();
-    }, [currentUser, monthKey]);
+    }, [currentUser, monthKey, currentWeekKey]);
 
     const moveMonth = (offset: number) => {
         setActiveMonthDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + offset, 1));
@@ -439,6 +480,35 @@ const AvailabilityContent = ({ currentUser }: any) => {
         }
     };
 
+    const saveCommonPoint = async () => {
+        const userId = currentUser?.id || firebaseAuth.currentUser?.uid;
+        if (!userId) return;
+        if (!commonPoint.trim()) {
+            Alert.alert('Error', 'Please enter a collection point.');
+            return;
+        }
+        setIsSavingPoint(true);
+        try {
+            const firestore = getFirestore();
+            const officialRef = doc(firestore, 'officials', userId);
+            await setDoc(
+                officialRef,
+                {
+                    commonPoints: {
+                        [currentWeekKey]: commonPoint,
+                    },
+                    updatedAt: Date.now(),
+                },
+                { merge: true }
+            );
+            Alert.alert('Success', 'Weekly collection point updated.');
+        } catch (error) {
+            Alert.alert('Error', 'Failed to save collection point.');
+        } finally {
+            setIsSavingPoint(false);
+        }
+    };
+
     return (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <LinearGradient
@@ -447,10 +517,37 @@ const AvailabilityContent = ({ currentUser }: any) => {
                 style={[styles.headerGradient, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
             >
                 <Text style={[styles.headerTitle, { alignSelf: 'center' }]}>My Availability</Text>
-                <Text style={styles.headerSubtitle}>Select available dates for a specific month</Text>
+                <Text style={styles.headerSubtitle}>Manage weekly collection points & availability</Text>
             </LinearGradient>
 
             <View style={styles.contentSection}>
+                {/* Weekly Collection Point Input */}
+                <View style={[styles.dutyCard, { marginBottom: 24, flexDirection: 'column', alignItems: 'flex-start' }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                        <MaterialCommunityIcons name="map-marker-radius" size={24} color="#00c853" />
+                        <Text style={[styles.cardTitle, { marginLeft: 8 }]}>Weekly Collection Point</Text>
+                    </View>
+                    <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>Current Week: {currentWeekKey}</Text>
+                    <TextInput
+                        style={[styles.input, { width: '100%', backgroundColor: '#1a2634', marginBottom: 16 }]}
+                        placeholder="Enter common point (e.g. Main Square)"
+                        placeholderTextColor="#7A8A99"
+                        value={commonPoint}
+                        onChangeText={setCommonPoint}
+                    />
+                    <TouchableOpacity 
+                        onPress={saveCommonPoint} 
+                        style={[styles.smallActionButton, { alignSelf: 'flex-end', paddingHorizontal: 20 }]}
+                        disabled={isSavingPoint}
+                    >
+                        {isSavingPoint ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                            <Text style={styles.actionButtonText}>Update Point</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+
                 <View style={styles.monthHeaderRow}>
                     <TouchableOpacity style={styles.monthNavButton} onPress={() => moveMonth(-1)}>
                         <MaterialCommunityIcons name="chevron-left" size={20} color="#00c853" />
@@ -590,6 +687,7 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
                                 time: orderData.time || 'Time not provided',
                                 date: orderData.date || (dateKey ? new Date(dateKey).toLocaleDateString() : 'Date not provided'),
                                 dateKey,
+                                paymentStatus: orderData.paymentStatus,
                             };
                         })
                         .filter((order) => {
@@ -618,14 +716,17 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
     }, [currentUser, scheduleMonthKey]);
 
     const handleNavigate = (address: string) => {
-        const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
-        Linking.openURL(url);
+        const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`;
+        Linking.openURL(url).catch(() => {
+            Alert.alert('Error', 'Could not open Google Maps.');
+        });
     };
 
-    const handleCollectWaste = (collection: any) => {
-        setSelectedCollection(collection);
-        setSelectedWasteType(collection.type);
+    const handleCollectWaste = (collectionItem: PlannedCollection) => {
+        setSelectedCollection(collectionItem);
+        setSelectedWasteType(collectionItem.type);
         setWasteQuantity('');
+        // Remove manual toggle, we use the order's paymentStatus
         setIsModalVisible(true);
     };
 
@@ -637,6 +738,11 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
     const completeAndPay = async () => {
         if (!wasteQuantity) {
             Alert.alert('Error', 'Please enter waste quantity');
+            return;
+        }
+
+        if (selectedCollection?.paymentStatus !== 'Paid') {
+            Alert.alert('Payment Required', 'The resident must complete the payment before this collection can be marked as completed.');
             return;
         }
 
@@ -832,12 +938,41 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
                                     />
                                 </View>
 
-                                <TouchableOpacity onPress={completeAndPay} activeOpacity={0.8} style={{ marginTop: 20 }}>
-                                    <LinearGradient colors={isCompleting ? ['#16362a', '#0e2419'] : ['#00c853', '#1b8a2a']} style={styles.actionButton}>
+                                {/* Payment Status Display */}
+                                <View style={[styles.switchRow, { marginTop: 16, marginBottom: 8, paddingHorizontal: 4 }]}>
+                                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                        <MaterialCommunityIcons 
+                                            name={selectedCollection?.paymentStatus === 'Paid' ? "cash-check" : "cash-remove"} 
+                                            size={24} 
+                                            color={selectedCollection?.paymentStatus === 'Paid' ? "#00c853" : "#ff5252"} 
+                                        />
+                                        <View>
+                                            <Text style={[styles.inputLabel, { marginTop: 0, marginBottom: 2 }]}>
+                                                Payment: {selectedCollection?.paymentStatus === 'Paid' ? 'Received' : 'Pending'}
+                                            </Text>
+                                            <Text style={{ color: '#8ea1b4', fontSize: 12 }}>
+                                                {selectedCollection?.paymentStatus === 'Paid' 
+                                                    ? 'Resident has completed the payment via UPI.' 
+                                                    : 'Resident must pay via their app before completion.'}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                </View>
+
+                                <TouchableOpacity 
+                                    onPress={completeAndPay} 
+                                    activeOpacity={0.8} 
+                                    style={{ marginTop: 20 }}
+                                    disabled={!wasteQuantity || selectedCollection?.paymentStatus !== 'Paid' || isCompleting}
+                                >
+                                    <LinearGradient 
+                                        colors={(!wasteQuantity || selectedCollection?.paymentStatus !== 'Paid' || isCompleting) ? ['#1f3042', '#1a2634'] : ['#00c853', '#1b8a2a']} 
+                                        style={[styles.actionButton, (!wasteQuantity || selectedCollection?.paymentStatus !== 'Paid' || isCompleting) && { opacity: 0.7 }]}
+                                    >
                                         {isCompleting ? (
                                             <ActivityIndicator size="small" color="#FFFFFF" />
                                         ) : (
-                                            <Text style={styles.actionButtonText}>Complete & Pay</Text>
+                                            <Text style={styles.actionButtonText}>Complete Collection</Text>
                                         )}
                                     </LinearGradient>
                                 </TouchableOpacity>
@@ -913,81 +1048,6 @@ const SettingsContent = ({ currentUser, onOpenHistory }: any) => {
     );
 };
 
-// --- Payment Content ---
-const PaymentContent = () => {
-    const [bankName, setBankName] = useState('');
-    const [accNumber, setAccNumber] = useState('');
-    const [ifsc, setIfsc] = useState('');
-
-    const saveBankDetails = () => {
-        if (!bankName || !accNumber || !ifsc) {
-            Alert.alert('Error', 'Please fill all fields');
-            return;
-        }
-        Alert.alert('Success', 'Bank details saved successfully! (UI Only)');
-    };
-
-    return (
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <LinearGradient
-                colors={['#0a3f18', '#0d2f16', '#0b1a12']}
-                locations={[0, 0.5, 1]}
-                style={[styles.headerGradient, { paddingBottom: 20, paddingTop: 40, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }]}
-            >
-                <Text style={[styles.headerTitle, { alignSelf: 'center' }]}>Bank Account Details</Text>
-                <Text style={styles.headerSubtitle}>Set up your bank account for receiving payouts</Text>
-            </LinearGradient>
-
-            <View style={[styles.contentSection, { paddingTop: 24 }]}>
-                <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Account Holder Name</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="e.g. John Doe"
-                        placeholderTextColor="#7A8A99"
-                        value={bankName}
-                        onChangeText={setBankName}
-                    />
-                </View>
-
-                <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Bank Account Number</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Enter account number"
-                        placeholderTextColor="#7A8A99"
-                        value={accNumber}
-                        onChangeText={setAccNumber}
-                        keyboardType="number-pad"
-                    />
-                </View>
-
-                <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>IFSC Code</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="e.g. SBIN0001234"
-                        placeholderTextColor="#7A8A99"
-                        value={ifsc}
-                        onChangeText={(t) => setIfsc(t.toUpperCase())}
-                        autoCapitalize="characters"
-                    />
-                </View>
-
-                <View style={styles.infoBox}>
-                    <MaterialCommunityIcons name="shield-check" size={18} color="#3d7a56" style={styles.infoIcon} />
-                    <Text style={styles.infoText}>Your bank details are encrypted and securely stored. This UI is a placeholder as per requirements.</Text>
-                </View>
-
-                <TouchableOpacity onPress={saveBankDetails} activeOpacity={0.8} style={{ marginTop: 32 }}>
-                    <LinearGradient colors={['#00c853', '#1b8a2a']} style={styles.actionButton}>
-                        <Text style={styles.actionButtonText}>Save Details</Text>
-                    </LinearGradient>
-                </TouchableOpacity>
-            </View>
-        </ScrollView>
-    );
-};
 
 const styles = StyleSheet.create({
     safeArea: {
@@ -1468,6 +1528,12 @@ const styles = StyleSheet.create({
         fontSize: 16,
         backgroundColor: '#0b1120'
     },
+    switchRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 8,
+    },
     actionButton: {
         paddingVertical: 14,
         borderRadius: 8,
@@ -1478,6 +1544,14 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: '700',
         color: '#FFFFFF',
+    },
+    smallActionButton: {
+        backgroundColor: '#00c853',
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     infoBox: {
         marginTop: 8,

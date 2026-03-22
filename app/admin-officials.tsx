@@ -11,10 +11,10 @@ import {
     setDoc,
 } from 'firebase/firestore';
 import React, { useEffect, useMemo, useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     ActivityIndicator,
     Alert,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Switch,
@@ -40,8 +40,12 @@ export default function AdminOfficialsScreen() {
     const [officials, setOfficials] = useState<OfficialCredential[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [isUnlocked, setIsUnlocked] = useState(false);
-    const [authPassword, setAuthPassword] = useState('');
+    const [adminUpiId, setAdminUpiId] = useState('');
+    const [adminUpiName, setAdminUpiName] = useState('');
+    const [adminBankName, setAdminBankName] = useState('');
+    const [adminAccNumber, setAdminAccNumber] = useState('');
+    const [adminIfsc, setAdminIfsc] = useState('');
+    const [savingPayment, setSavingPayment] = useState(false);
 
     const [userId, setUserId] = useState('');
     const [displayName, setDisplayName] = useState('');
@@ -75,6 +79,25 @@ export default function AdminOfficialsScreen() {
             }
         );
 
+        const fetchPaymentSettings = async () => {
+            try {
+                const snap = await getDoc(doc(firestore, 'admin', 'settings'));
+                if (snap.exists()) {
+                    const data = snap.data();
+                    if (data?.payment) {
+                        setAdminUpiId(data.payment.upiId || '');
+                        setAdminUpiName(data.payment.upiName || '');
+                        setAdminBankName(data.payment.bankName || '');
+                        setAdminAccNumber(data.payment.accNumber || '');
+                        setAdminIfsc(data.payment.ifsc || '');
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to fetch admin payment settings", err);
+            }
+        };
+        fetchPaymentSettings();
+
         return () => unsubscribe();
     }, [firestore]);
 
@@ -84,51 +107,6 @@ export default function AdminOfficialsScreen() {
         setPassword('');
         setIsActive(true);
     };
-
-    const unlockAdmin = () => {
-        if (authPassword.trim() !== ADMIN_PANEL_PASSWORD) {
-            Alert.alert('Access denied', 'Invalid admin password.');
-            return;
-        }
-
-        setIsUnlocked(true);
-        setAuthPassword('');
-    };
-
-    if (!isUnlocked) {
-        return (
-            <SafeAreaView style={styles.safeArea}>
-                <LinearGradient colors={['#0a3f18', '#0d2f16', '#0b1a12']} style={styles.header}>
-                    <View style={styles.headerRow}>
-                        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                            <Text style={styles.backButtonText}>Back</Text>
-                        </TouchableOpacity>
-                        <Text style={styles.headerTitle}>Admin Official Credentials</Text>
-                        <View style={styles.headerSpacer} />
-                    </View>
-                    <Text style={styles.headerSubtitle}>Authentication required</Text>
-                </LinearGradient>
-
-                <View style={{ padding: 16 }}>
-                    <View style={styles.formCard}>
-                        <Text style={styles.sectionTitle}>Enter Admin Password</Text>
-                        <TextInput
-                            style={styles.input}
-                            value={authPassword}
-                            onChangeText={setAuthPassword}
-                            secureTextEntry
-                            placeholder="Admin password"
-                            placeholderTextColor="#6f8294"
-                            autoCapitalize="none"
-                        />
-                        <TouchableOpacity style={styles.saveButton} onPress={unlockAdmin}>
-                            <Text style={styles.saveButtonText}>Unlock</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </SafeAreaView>
-        );
-    }
 
     const loadOfficialToForm = async (targetUserId: string) => {
         try {
@@ -178,6 +156,31 @@ export default function AdminOfficialsScreen() {
             Alert.alert('Error', 'Unable to save official credentials.');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const savePaymentSettings = async () => {
+        setSavingPayment(true);
+        try {
+            await setDoc(
+                doc(firestore, 'admin', 'settings'),
+                {
+                    payment: {
+                        upiId: adminUpiId.trim(),
+                        upiName: adminUpiName.trim(),
+                        bankName: adminBankName.trim(),
+                        accNumber: adminAccNumber.trim(),
+                        ifsc: adminIfsc.trim().toUpperCase(),
+                    },
+                    updatedAt: Date.now()
+                },
+                { merge: true }
+            );
+            Alert.alert('Saved', 'Global payment settings updated successfully.');
+        } catch {
+            Alert.alert('Error', 'Unable to save payment settings.');
+        } finally {
+            setSavingPayment(false);
         }
     };
 
@@ -257,6 +260,67 @@ export default function AdminOfficialsScreen() {
 
                     <TouchableOpacity style={[styles.saveButton, saving && styles.saveButtonDisabled]} disabled={saving} onPress={saveOfficial}>
                         {saving ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.saveButtonText}>Save Credential</Text>}
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.formCard}>
+                    <Text style={styles.sectionTitle}>Global Payment Settings</Text>
+                    <Text style={{ color: '#8ea1b4', marginBottom: 12, fontSize: 13 }}>
+                        These details will be used when residents click "Make a Payment".
+                    </Text>
+
+                    <Text style={styles.inputLabel}>Admin UPI ID</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={adminUpiId}
+                        onChangeText={setAdminUpiId}
+                        autoCapitalize="none"
+                        placeholder="e.g. company@ybl"
+                        placeholderTextColor="#6f8294"
+                    />
+
+                    <Text style={styles.inputLabel}>Admin UPI Name</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={adminUpiName}
+                        onChangeText={setAdminUpiName}
+                        autoCapitalize="words"
+                        placeholder="e.g. Haritham Waste Management"
+                        placeholderTextColor="#6f8294"
+                    />
+
+                    <Text style={styles.inputLabel}>Bank Account Holder Name</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={adminBankName}
+                        onChangeText={setAdminBankName}
+                        autoCapitalize="words"
+                        placeholder="e.g. John Doe"
+                        placeholderTextColor="#6f8294"
+                    />
+
+                    <Text style={styles.inputLabel}>Bank Account Number</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={adminAccNumber}
+                        onChangeText={setAdminAccNumber}
+                        keyboardType="number-pad"
+                        placeholder="Enter account number"
+                        placeholderTextColor="#6f8294"
+                    />
+
+                    <Text style={styles.inputLabel}>IFSC Code</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={adminIfsc}
+                        onChangeText={(t) => setAdminIfsc(t.toUpperCase())}
+                        autoCapitalize="characters"
+                        placeholder="e.g. SBIN0001234"
+                        placeholderTextColor="#6f8294"
+                    />
+
+                    <TouchableOpacity style={[styles.saveButton, savingPayment && styles.saveButtonDisabled]} disabled={savingPayment} onPress={savePaymentSettings}>
+                        {savingPayment ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.saveButtonText}>Save Payment Details</Text>}
                     </TouchableOpacity>
                 </View>
 

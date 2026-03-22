@@ -5,8 +5,9 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { updatePassword } from 'firebase/auth';
-import { addDoc, collection, doc, getDoc, getDocs, getFirestore, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, getFirestore, limit, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     ActivityIndicator,
     Alert,
@@ -17,7 +18,6 @@ import {
     Linking,
     Modal,
     Platform,
-    SafeAreaView,
     ScrollView,
     StatusBar,
     StyleSheet,
@@ -44,8 +44,10 @@ interface Order {
     date: string;
     time: string;
     status: string;
+    paymentStatus?: string;
     weight?: string;
     points?: string;
+    assignedOfficialId?: string | null;
 }
 
 interface ResidentProfile {
@@ -96,6 +98,15 @@ const clampToBusinessHours = (time: Date) => {
 
 const getMinutesOfDay = (time: Date) => time.getHours() * 60 + time.getMinutes();
 
+const getWeekKey = (date = new Date()) => {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+};
+
 export default function HomeScreen() {
     const [activeTab, setActiveTab] = useState('home');
     const [orders, setOrders] = useState<Order[]>([]);
@@ -112,6 +123,11 @@ export default function HomeScreen() {
     const [isChangePasswordModalVisible, setIsChangePasswordModalVisible] = useState(false);
     const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' });
     const [isLogoutConfirmModalVisible, setIsLogoutConfirmModalVisible] = useState(false);
+    
+    // Common Collection Point State
+    const [isCommonPointModalVisible, setIsCommonPointModalVisible] = useState(false);
+    const [commonPoint, setCommonPoint] = useState<string | null>(null);
+    const [isLoadingPoint, setIsLoadingPoint] = useState(false);
     const [isModifying, setIsModifying] = useState(false);
 
     // Booking State
@@ -325,6 +341,7 @@ export default function HomeScreen() {
                             date: data.date || '-',
                             time: data.time || '-',
                             status: normalizeOrderStatus(data.status),
+                            paymentStatus: data.paymentStatus || 'Pending',
                             weight: data.weight || '-',
                             points: data.points || '0 Points',
                             createdAt: data.createdAt || 0,
@@ -353,6 +370,16 @@ export default function HomeScreen() {
     const activeOrders = orders.filter((order) => order.status !== 'Cancelled' && order.status !== 'Completed');
     const historyOrders = orders.filter((order) => order.status === 'Cancelled' || order.status === 'Completed');
     const completedOrders = orders.filter((order) => order.status === 'Completed');
+
+    const getLatestAssignedOfficialId = () => {
+        for (const order of orders) {
+            if (order.assignedOfficialId) {
+                return order.assignedOfficialId;
+            }
+        }
+        return null;
+    };
+    const latestOfficialId = getLatestAssignedOfficialId();
     const totalCollectedKg = completedOrders.reduce((acc, item) => acc + parseWeightKg(item.weight), 0);
     const totalEcoPoints = completedOrders.reduce((acc, item) => {
         const pointsValue = Number((item.points || '0').replace(/[^0-9]/g, ''));
@@ -444,13 +471,98 @@ export default function HomeScreen() {
         await handleLogout();
     };
 
+    const handleOrderPayment = async (orderId: string) => {
+        try {
+            const firestore = getFirestore();
+            const adminRef = doc(firestore, 'admin', 'settings');
+            const adminSnap = await getDoc(adminRef);
+            
+            if (!adminSnap.exists()) {
+                Alert.alert('Unavailable', 'The platform payment details are not configured yet.');
+                return;
+            }
+
+            const adminData = adminSnap.data();
+            const upiId = adminData?.payment?.upiId;
+            const upiName = adminData?.payment?.upiName || 'Admin Payment';
+
+            if (!upiId) {
+                Alert.alert('Unavailable', 'The platform payment details have not been set up yet.');
+                return;
+            }
+
+            // Construct UPI URI
+            const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiName)}&tn=${encodeURIComponent(`Order ${orderId}`)}&cu=INR`;
+
+            const supported = await Linking.canOpenURL(upiUri);
+            if (supported) {
+                await Linking.openURL(upiUri);
+                // Mark as paid in database (Simulated success)
+                await updateDoc(doc(firestore, 'orders', orderId), {
+                    paymentStatus: 'Paid',
+                    updatedAt: Date.now()
+                });
+            } else {
+                Alert.alert("Error", "No UPI app found on this device.");
+            }
+        } catch (error) {
+            console.error("Payment error:", error);
+        }
+    };
+
+    const handleViewCommonPoint = async () => {
+        setIsCommonPointModalVisible(true);
+        setIsLoadingPoint(true);
+        try {
+            const firestore = getFirestore();
+            let targetOfficialId = latestOfficialId;
+
+            // If no official is assigned via previous orders, find the first active official
+            if (!targetOfficialId) {
+                const officialsSnapshot = await getDocs(
+                    query(collection(firestore, 'officials'), limit(1))
+                );
+                if (!officialsSnapshot.empty) {
+                    targetOfficialId = officialsSnapshot.docs[0].id;
+                }
+            }
+
+            if (!targetOfficialId) {
+                setCommonPoint('No officials found in service.');
+                setIsLoadingPoint(false);
+                return;
+            }
+
+            const officialRef = doc(firestore, 'officials', targetOfficialId);
+            const officialSnap = await getDoc(officialRef);
+            
+            if (officialSnap.exists()) {
+                const data = officialSnap.data();
+                const weekKey = getWeekKey();
+                const points = data.commonPoints || {};
+                setCommonPoint(points[weekKey] || 'No collection point set for this week.');
+            } else {
+                setCommonPoint('Official information not found.');
+            }
+        } catch (error) {
+            console.error('Error fetching common point:', error);
+            setCommonPoint('Error loading collection point.');
+        } finally {
+            setIsLoadingPoint(false);
+        }
+    };
+
     return (
         <SafeAreaView style={styles.safeArea}>
             <StatusBar barStyle="light-content" />
             <View style={styles.container}>
 
                 {activeTab === 'home' && !isBooking && (
-                    <HomeContent onBookAppointment={handleStartBooking} />
+                    <HomeContent 
+                        onBookAppointment={handleStartBooking} 
+                        latestOfficialId={latestOfficialId} 
+                        onViewCommonPoint={handleViewCommonPoint}
+                    />
                 )}
 
                 {activeTab === 'home' && isBooking && (
@@ -471,6 +583,7 @@ export default function HomeScreen() {
                         orders={activeOrders}
                         onSchedulePickup={handleSchedulePickup}
                         onCancelOrder={handleCancelOrder}
+                        handleOrderPayment={handleOrderPayment}
                         isOrdersLoading={isOrdersLoading}
                         orderActionLoadingId={orderActionLoadingId}
                     />
@@ -503,6 +616,52 @@ export default function HomeScreen() {
                         ecoPoints={totalEcoPoints}
                     />
                 )}
+
+                {/* Common Collection Point Modal */}
+                <Modal
+                    visible={isCommonPointModalVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setIsCommonPointModalVisible(false)}
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.modalContent}>
+                            <View style={styles.modalHeader}>
+                                <Text style={styles.modalTitle}>Weekly Collection Point</Text>
+                                <TouchableOpacity onPress={() => setIsCommonPointModalVisible(false)}>
+                                    <MaterialCommunityIcons name="close" size={24} color="#7b8a9e" />
+                                </TouchableOpacity>
+                            </View>
+                            
+                            <View style={styles.modalBody}>
+                                <View style={[styles.infoBox, { marginBottom: 20 }]}>
+                                    <MaterialCommunityIcons name="information" size={20} color="#00c853" />
+                                    <Text style={styles.infoText}>
+                                        This is the common point set by your official for waste collection this week.
+                                    </Text>
+                                </View>
+
+                                {isLoadingPoint ? (
+                                    <ActivityIndicator size="large" color="#00c853" style={{ marginVertical: 30 }} />
+                                ) : (
+                                    <View style={styles.pointDetailCard}>
+                                        <MaterialCommunityIcons name="map-marker-radius" size={40} color="#00c853" style={{ marginBottom: 12 }} />
+                                        <Text style={styles.pointLabel}>Current Week's Point:</Text>
+                                        <Text style={styles.pointValue}>{commonPoint}</Text>
+                                        <Text style={styles.weekText}>Week: {getWeekKey()}</Text>
+                                    </View>
+                                )}
+
+                                <TouchableOpacity 
+                                    style={styles.confirmButton}
+                                    onPress={() => setIsCommonPointModalVisible(false)}
+                                >
+                                    <Text style={styles.confirmButtonText}>Close</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
 
                 {/* Bottom Navigation */}
                 <View style={styles.bottomNav}>
@@ -539,23 +698,7 @@ export default function HomeScreen() {
 
 // --- Sub Components ---
 
-const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) => {
-    const handleUPIPayment = async () => {
-        // Example UPI URI structure
-        const upiUri = 'upi://pay?pa=haritham@upi&pn=Haritham&am=1.00&cu=INR';
-
-        try {
-            const supported = await Linking.canOpenURL(upiUri);
-            if (supported) {
-                await Linking.openURL(upiUri);
-            } else {
-                Alert.alert("Error", "No UPI app found on this device.");
-            }
-        } catch (error) {
-            Alert.alert("Error", "Failed to open UPI app.");
-        }
-    };
-
+const HomeContent = ({ onBookAppointment, latestOfficialId, onViewCommonPoint }: { onBookAppointment: () => void, latestOfficialId: string | null, onViewCommonPoint: () => void }) => {
     return (
         <ScrollView
             contentContainerStyle={styles.scrollContent}
@@ -615,8 +758,8 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                 </TouchableOpacity>
 
                 {/* Collection Points Card */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Collection Points Near Me</Text>
-                <TouchableOpacity activeOpacity={0.9}>
+                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Common Collection Point</Text>
+                <TouchableOpacity activeOpacity={0.9} onPress={onViewCommonPoint}>
                     <LinearGradient
                         colors={['#0f2d1a', '#0c1e14', '#0b1518']}
                         start={{ x: 0, y: 0 }}
@@ -628,37 +771,12 @@ const HomeContent = ({ onBookAppointment }: { onBookAppointment: () => void }) =
                                 colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
                                 style={styles.iconGradient}
                             >
-                                <MaterialCommunityIcons name="map-marker-outline" size={28} color="#00c853" />
+                                <MaterialCommunityIcons name="map-marker-radius-outline" size={28} color="#00c853" />
                             </LinearGradient>
                         </View>
                         <View style={styles.cardContent}>
-                            <Text style={styles.cardTitle}>Find Collection Points</Text>
-                            <Text style={styles.cardSubtitle}>Locate nearby waste collection centers</Text>
-                        </View>
-                        <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
-                    </LinearGradient>
-                </TouchableOpacity>
-
-                {/* Payments Section */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Payments & Bills</Text>
-                <TouchableOpacity activeOpacity={0.9} onPress={handleUPIPayment}>
-                    <LinearGradient
-                        colors={['#0f2d1a', '#0c1e14', '#0b1518']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.card}
-                    >
-                        <View style={styles.iconBox}>
-                            <LinearGradient
-                                colors={['rgba(0,200,83,0.22)', 'rgba(0,200,83,0.06)']}
-                                style={styles.iconGradient}
-                            >
-                                <MaterialCommunityIcons name="credit-card-outline" size={28} color="#00c853" />
-                            </LinearGradient>
-                        </View>
-                        <View style={styles.cardContent}>
-                            <Text style={styles.cardTitle}>Make a Payment</Text>
-                            <Text style={styles.cardSubtitle}>Pay securely via UPI</Text>
+                            <Text style={styles.cardTitle}>Weekly Common Point</Text>
+                            <Text style={styles.cardSubtitle}>View this week's centralized collection spot</Text>
                         </View>
                         <MaterialCommunityIcons name="chevron-right" size={24} color="#00c853" />
                     </LinearGradient>
@@ -913,12 +1031,14 @@ const OrdersContent = ({
     orders,
     onSchedulePickup,
     onCancelOrder,
+    handleOrderPayment,
     isOrdersLoading,
     orderActionLoadingId,
 }: {
     orders: Order[];
     onSchedulePickup: () => void;
     onCancelOrder: (orderId: string) => void;
+    handleOrderPayment: (orderId: string) => void;
     isOrdersLoading: boolean;
     orderActionLoadingId: string | null;
 }) => {
@@ -1023,18 +1143,42 @@ const OrdersContent = ({
                                 )}
                             </View>
 
-                            <TouchableOpacity
-                                style={styles.orderCancelButton}
-                                activeOpacity={0.8}
-                                onPress={() => onCancelOrder(order.id)}
-                                disabled={orderActionLoadingId === order.id}
-                            >
-                                {orderActionLoadingId === order.id ? (
-                                    <ActivityIndicator size="small" color="#ff8a80" />
-                                ) : (
-                                    <Text style={styles.orderCancelButtonText}>Cancel Pickup</Text>
+                            <View style={{ flexDirection: 'row', gap: 12, marginTop: 14 }}>
+                                <TouchableOpacity
+                                    style={[styles.orderCancelButton, { flex: 1, marginTop: 0 }]}
+                                    activeOpacity={0.8}
+                                    onPress={() => onCancelOrder(order.id)}
+                                    disabled={orderActionLoadingId === order.id}
+                                >
+                                    {orderActionLoadingId === order.id ? (
+                                        <ActivityIndicator size="small" color="#ff8a80" />
+                                    ) : (
+                                        <Text style={styles.orderCancelButtonText}>Cancel Pickup</Text>
+                                    )}
+                                </TouchableOpacity>
+
+                                {isScheduled && order.paymentStatus !== 'Paid' && (
+                                    <TouchableOpacity
+                                        style={[styles.payNowButton, { flex: 1 }]}
+                                        activeOpacity={0.8}
+                                        onPress={() => handleOrderPayment(order.id)}
+                                    >
+                                        <LinearGradient
+                                            colors={['#00c853', '#009624']}
+                                            style={styles.payNowGradient}
+                                        >
+                                            <Text style={styles.payNowButtonText}>Pay Now</Text>
+                                        </LinearGradient>
+                                    </TouchableOpacity>
                                 )}
-                            </TouchableOpacity>
+                                
+                                {order.paymentStatus === 'Paid' && (
+                                    <View style={[styles.paidBadge, { flex: 1 }]}>
+                                        <MaterialCommunityIcons name="check-circle" size={16} color="#00c853" />
+                                        <Text style={styles.paidBadgeText}>Paid</Text>
+                                    </View>
+                                )}
+                            </View>
                         </LinearGradient>
                     );
                 })}
@@ -2174,13 +2318,41 @@ const styles = StyleSheet.create({
     confirmButtonTextDisabled: {
         color: '#8ba696',
     },
+    payNowButton: {
+        borderRadius: 10,
+        overflow: 'hidden',
+    },
+    payNowGradient: {
+        paddingVertical: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    payNowButtonText: {
+        color: '#0b1120',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    paidBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        backgroundColor: 'rgba(0, 200, 83, 0.12)',
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 200, 83, 0.35)',
+    },
+    paidBadgeText: {
+        color: '#00e676',
+        fontSize: 14,
+        fontWeight: '700',
+    },
     timeRowsContainer: {
-        gap: 0, // Using margins on labels instead for spacing
+        gap: 0,
     },
     timeRow: {
-        //marginBottom: 0,
+        // marginBottom: 0,
     },
-    // --- Modal Styles ---
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.6)',
@@ -2307,5 +2479,48 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
         color: '#FFFFFF',
+    },
+    infoBox: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: 'rgba(0, 180, 80, 0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(0, 180, 80, 0.12)',
+        borderRadius: 8,
+        padding: 12,
+        gap: 12,
+    },
+    infoText: {
+        fontSize: 14,
+        color: '#7aaa8e',
+        lineHeight: 20,
+        flex: 1,
+    },
+    pointDetailCard: {
+        backgroundColor: '#162332',
+        borderRadius: 16,
+        padding: 24,
+        alignItems: 'center',
+        marginHorizontal: 10,
+        marginBottom: 24,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 200, 83, 0.2)',
+    },
+    pointLabel: {
+        color: '#7b8a9e',
+        fontSize: 14,
+        marginBottom: 8,
+    },
+    pointValue: {
+        color: '#ffffff',
+        fontSize: 20,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        marginBottom: 12,
+    },
+    weekText: {
+        color: '#00c853',
+        fontSize: 12,
+        fontWeight: '600',
     },
 });
