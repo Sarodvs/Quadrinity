@@ -358,7 +358,7 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
         fontWeight: '400',
         textAlign: 'center',
-        fontFamily: 'SN_Pro_Regular'
+        fontFamily: 'System'
     },
     divider: {
         height: 1,
