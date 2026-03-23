@@ -383,6 +383,13 @@ export default function LoginScreen() {
                                         autoCapitalize="none"
                                     />
                                 </View>
+                                <View style={styles.forgotPasswordContainer}>
+                                    <TouchableOpacity
+                                        onPress={() => router.push({ pathname: '/forgot-password', params: { email } })}
+                                    >
+                                        <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+                                    </TouchableOpacity>
+                                </View>
                                 {/* Register Now Link */}
                                 <View style={styles.registerLinkContainer}>
                                     <Text style={styles.registerText}>Don't have an account? </Text>

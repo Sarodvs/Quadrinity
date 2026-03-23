@@ -3,10 +3,13 @@
 
 import { auth } from '@/firebase';
 import {
+    ActionCodeSettings,
     ConfirmationResult,
+    confirmPasswordReset,
     createUserWithEmailAndPassword,
     signOut as firebaseSignOut,
     RecaptchaVerifier,
+    sendPasswordResetEmail,
     signInWithEmailAndPassword,
     signInWithPhoneNumber,
 } from 'firebase/auth';
@@ -39,6 +42,32 @@ const DEMO_OFFICIALS: Record<string, { password: string; displayName: string }> 
     OFF003: { password: 'Recycle@345', displayName: 'Rahul Das' },
     OFF004: { password: 'EcoDrive@456', displayName: 'Anjali Menon' },
     OFF005: { password: 'WasteLess@567', displayName: 'Vikram Pillai' },
+};
+
+const getFirebaseErrorMessage = (error: any, fallback: string) => {
+    const code = String(error?.code || '').toLowerCase();
+    if (code.includes('invalid-email')) return 'Invalid email address.';
+    if (code.includes('user-not-found')) return 'No account was found for this email.';
+    if (code.includes('too-many-requests')) return 'Too many attempts. Please wait a few minutes and try again.';
+    if (code.includes('network-request-failed')) return 'Network error. Check your connection and try again.';
+    if (code.includes('operation-not-allowed')) return 'Email/password sign-in is not enabled in Firebase Auth settings.';
+    if (code.includes('invalid-action-code')) return 'This reset code/link is invalid or already used.';
+    if (code.includes('expired-action-code')) return 'This reset code/link has expired. Request a new one.';
+    if (code.includes('weak-password')) return 'Password is too weak. Use at least 6 characters.';
+    return error?.message || fallback;
+};
+
+const extractActionCode = (input: string) => {
+    const value = (input || '').trim();
+    if (!value) return '';
+
+    // Support pasting the full Firebase reset link from email.
+    const match = value.match(/[?&]oobCode=([^&]+)/i);
+    if (match?.[1]) {
+        return decodeURIComponent(match[1]);
+    }
+
+    return value;
 };
 
 const authService = {
@@ -263,6 +292,57 @@ const authService = {
             return {
                 success: false,
                 error: error.message || 'Failed to register',
+            };
+        }
+    },
+
+    /**
+     * Sends a password reset email. The email includes a one-time reset code/link.
+     */
+    sendPasswordResetOtpToEmail: async (email: string): Promise<VerifyResult> => {
+        try {
+            const normalizedEmail = (email || '').trim().toLowerCase();
+            if (!normalizedEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) {
+                return { success: false, error: 'Enter a valid email address.' };
+            }
+
+            const actionCodeSettings: ActionCodeSettings = {
+                // Firebase requires a valid, authorized domain URL for password reset actions.
+                url: 'https://haritham-74b4d.firebaseapp.com/login',
+                handleCodeInApp: false,
+            };
+
+            auth.languageCode = 'en';
+
+            await sendPasswordResetEmail(auth, normalizedEmail, actionCodeSettings);
+            return { success: true };
+        } catch (error: any) {
+            return {
+                success: false,
+                error: getFirebaseErrorMessage(error, 'Failed to send reset email.'),
+            };
+        }
+    },
+
+    /**
+     * Completes password reset with the one-time reset code from the email.
+     */
+    resetPasswordWithOtpCode: async (otpCode: string, newPassword: string): Promise<VerifyResult> => {
+        try {
+            const code = extractActionCode(otpCode);
+            if (!code) {
+                return { success: false, error: 'Enter the reset code or paste the full reset link from your email.' };
+            }
+            if (!newPassword || newPassword.length < 6) {
+                return { success: false, error: 'Password must be at least 6 characters.' };
+            }
+
+            await confirmPasswordReset(auth, code, newPassword);
+            return { success: true };
+        } catch (error: any) {
+            return {
+                success: false,
+                error: getFirebaseErrorMessage(error, 'Failed to reset password.'),
             };
         }
     },

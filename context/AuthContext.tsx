@@ -1,4 +1,7 @@
+import { auth } from '@/firebase';
 import authService from '@/services/authService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { onAuthStateChanged } from 'firebase/auth';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
 interface User {
@@ -6,7 +9,10 @@ interface User {
     email?: string;
     phoneNumber?: string;
     displayName?: string;
+    role?: 'resident' | 'official';
 }
+
+const OFFICIAL_SESSION_KEY = 'official_session';
 
 interface AuthContextType {
     currentUser: User | null;
@@ -40,12 +46,40 @@ export const useAuth = () => {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Initialize auth state
-        // In a real app, you would check if user is logged in from storage
-        setLoading(false);
+        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+            try {
+                if (firebaseUser) {
+                    setCurrentUser({
+                        id: firebaseUser.uid,
+                        email: firebaseUser.email || undefined,
+                        phoneNumber: firebaseUser.phoneNumber || undefined,
+                        displayName:
+                            firebaseUser.displayName ||
+                            firebaseUser.email?.split('@')[0] ||
+                            'Resident',
+                        role: 'resident',
+                    });
+                    await AsyncStorage.removeItem(OFFICIAL_SESSION_KEY);
+                } else {
+                    const storedOfficial = await AsyncStorage.getItem(OFFICIAL_SESSION_KEY);
+                    if (storedOfficial) {
+                        const official = JSON.parse(storedOfficial) as User;
+                        setCurrentUser({ ...official, role: 'official' });
+                    } else {
+                        setCurrentUser(null);
+                    }
+                }
+            } catch {
+                setCurrentUser(null);
+            } finally {
+                setLoading(false);
+            }
+        });
+
+        return () => unsubscribe();
     }, []);
 
     const login = async (email: string, password: string) => {
@@ -53,10 +87,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const result = await authService.loginWithEmailAndPassword(email, password);
             if (result.success && result.user) {
+                await AsyncStorage.removeItem(OFFICIAL_SESSION_KEY);
                 setCurrentUser({
                     id: result.user.id,
                     email: result.user.email,
                     displayName: result.user.displayName,
+                    role: 'resident',
                 });
                 return { success: true };
             }
@@ -71,10 +107,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const result = await authService.registerWithEmailAndPassword({ email, password });
             if (result.success && result.user) {
+                await AsyncStorage.removeItem(OFFICIAL_SESSION_KEY);
                 setCurrentUser({
                     id: result.user.id,
                     email: result.user.email,
                     displayName: result.user.displayName,
+                    role: 'resident',
                 });
                 return { success: true };
             }
@@ -89,11 +127,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const result = await authService.loginOfficialWithCredentials(userId, password);
             if (result.success && result.user) {
-                setCurrentUser({
+                const officialSession: User = {
                     id: result.user.id,
                     email: result.user.email,
                     displayName: result.user.displayName,
-                });
+                    role: 'official',
+                };
+                await AsyncStorage.setItem(OFFICIAL_SESSION_KEY, JSON.stringify(officialSession));
+                setCurrentUser(officialSession);
                 return { success: true };
             }
             return { success: false, error: result.error };
@@ -107,10 +148,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const result = await authService.verifyOTP(verificationId, otpCode);
             if (result.success) {
-                setCurrentUser({
+                const officialSession: User = {
                     id: officialId || 'mock-official-id',
                     displayName: 'Official User',
-                });
+                    role: 'official',
+                };
+                await AsyncStorage.setItem(OFFICIAL_SESSION_KEY, JSON.stringify(officialSession));
+                setCurrentUser(officialSession);
                 return { success: true };
             }
             return { success: false, error: result.error };
@@ -123,6 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(true);
         try {
             await authService.logout();
+            await AsyncStorage.removeItem(OFFICIAL_SESSION_KEY);
             setCurrentUser(null);
         } finally {
             setLoading(false);

@@ -6,7 +6,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, getFirestore, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     ActivityIndicator,
     Alert,
@@ -26,6 +25,7 @@ import {
     TouchableWithoutFeedback,
     View
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 
@@ -66,6 +66,12 @@ interface PlannedCollection {
     id: string;
     residentName: string;
     address: string;
+    pickupLocation?: {
+        address?: string;
+        latitude?: number;
+        longitude?: number;
+        source?: 'manual' | 'gps';
+    };
     status: string;
     type: string;
     time: string;
@@ -79,6 +85,22 @@ const parseWeightKg = (weight: string | number | undefined) => {
     if (!weight) return 0;
     const numericValue = parseFloat(String(weight).replace(/[^0-9.]/g, ''));
     return Number.isNaN(numericValue) ? 0 : numericValue;
+};
+
+const getOrderDestination = (orderData: any) => {
+    const location = orderData?.pickupLocation || {};
+    const latitude = Number(location.latitude);
+    const longitude = Number(location.longitude);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        return `${latitude},${longitude}`;
+    }
+
+    const locationAddress = String(location.address || '').trim();
+    if (locationAddress) {
+        return locationAddress;
+    }
+
+    return String(orderData?.address || '').trim();
 };
 
 export default function OfficialDashboardScreen() {
@@ -194,7 +216,7 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
     const [isDutyActive, setIsDutyActive] = useState(false);
     const [loadingDuty, setLoadingDuty] = useState(false);
     const [stats, setStats] = useState({ pending: 0, completed: 0, collected: '0.00 kg' });
-    const [pendingAddresses, setPendingAddresses] = useState<string[]>([]);
+    const [pendingDestinations, setPendingDestinations] = useState<string[]>([]);
 
     useEffect(() => {
         const fetchDutyStatus = async () => {
@@ -228,15 +250,16 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
             let pendingCount = 0;
             let completedCount = 0;
             let totalCollectedKg = 0;
-            const addresses: string[] = [];
+            const destinations: string[] = [];
 
             snapshot.docs.forEach((orderDoc) => {
                 const data = orderDoc.data() as any;
                 const status = String(data.status || '').toLowerCase();
                 if (status === 'scheduled' || status === 'pending') {
                     pendingCount += 1;
-                    if (data.address) {
-                        addresses.push(data.address);
+                    const destination = getOrderDestination(data);
+                    if (destination) {
+                        destinations.push(destination);
                     }
                 }
                 if (status === 'completed') {
@@ -250,7 +273,7 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
                 completed: completedCount,
                 collected: `${totalCollectedKg.toFixed(2)} kg`,
             });
-            setPendingAddresses(addresses);
+            setPendingDestinations(destinations);
         });
 
         return () => unsubscribe();
@@ -281,13 +304,13 @@ const HomeContent = ({ currentUser, onLogout, onScanQR }: any) => {
     };
 
     const handleNavigateAll = () => {
-        if (pendingAddresses.length === 0) {
+        if (pendingDestinations.length === 0) {
             Alert.alert('No Pickups', 'There are no pending pickups to navigate to.');
             return;
         }
 
-        const destination = pendingAddresses[pendingAddresses.length - 1];
-        const waypointsList = pendingAddresses.slice(0, -1);
+        const destination = pendingDestinations[pendingDestinations.length - 1];
+        const waypointsList = pendingDestinations.slice(0, -1);
         
         let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
         
@@ -681,7 +704,8 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
                             return {
                                 id: orderDoc.id,
                                 residentName: orderData.residentName || 'Resident',
-                                address: orderData.address || 'Address not provided',
+                                address: orderData?.pickupLocation?.address || orderData.address || 'Address not provided',
+                                pickupLocation: orderData.pickupLocation || undefined,
                                 status: orderData.status || 'Scheduled',
                                 type: orderData.type || 'Scrap/Recyclable Waste',
                                 time: orderData.time || 'Time not provided',
@@ -715,8 +739,14 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
         return () => unsubscribe();
     }, [currentUser, scheduleMonthKey]);
 
-    const handleNavigate = (address: string) => {
-        const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`;
+    const handleNavigate = (collectionItem: PlannedCollection) => {
+        const destination = getOrderDestination(collectionItem);
+        if (!destination) {
+            Alert.alert('Address missing', 'No location is available for this pickup yet.');
+            return;
+        }
+
+        const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
         Linking.openURL(url).catch(() => {
             Alert.alert('Error', 'Could not open Google Maps.');
         });
@@ -877,7 +907,7 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
                             </View>
 
                             <View style={styles.collectionActions}>
-                                <TouchableOpacity style={styles.outlineButton} onPress={() => handleNavigate(item.address)}>
+                                <TouchableOpacity style={styles.outlineButton} onPress={() => handleNavigate(item)}>
                                     <MaterialCommunityIcons name="navigation-variant-outline" size={18} color="#00c853" />
                                     <Text style={styles.outlineButtonText}>Navigate</Text>
                                 </TouchableOpacity>

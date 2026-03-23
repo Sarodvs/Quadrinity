@@ -7,7 +7,7 @@ import { AuthProvider } from '@/context/AuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
-  anchor: 'login',
+  anchor: 'index',
 };
 
 export default function RootLayout() {
@@ -18,12 +18,13 @@ export default function RootLayout() {
     <AuthProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <Stack
-          initialRouteName="login"
+          initialRouteName="index"
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: '#000000' }
           }}
         >
+          <Stack.Screen name="index" />
           <Stack.Screen name="login" />
           <Stack.Screen
             name="modal"

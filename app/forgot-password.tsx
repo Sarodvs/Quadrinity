@@ -1,9 +1,11 @@
+import authService from '@/services/authService';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import {
+    ActivityIndicator,
+    Alert,
     Image,
     Keyboard,
     StatusBar,
@@ -14,26 +16,120 @@ import {
     TouchableWithoutFeedback,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function ForgotPasswordScreen() {
     const router = useRouter();
+    const { email: prefilledEmail } = useLocalSearchParams<{ email?: string }>();
+    const [step, setStep] = useState<'email' | 'otp'>('email');
     const [email, setEmail] = useState('');
+    const [otpCode, setOtpCode] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [timer, setTimer] = useState(45);
+    const [canResend, setCanResend] = useState(false);
+
+    useEffect(() => {
+        if (prefilledEmail) {
+            setEmail(String(prefilledEmail).trim());
+        }
+    }, [prefilledEmail]);
+
+    useEffect(() => {
+        if (step !== 'otp') {
+            return;
+        }
+
+        if (timer <= 0) {
+            setCanResend(true);
+            return;
+        }
+
+        const id = setInterval(() => {
+            setTimer((prev) => prev - 1);
+        }, 1000);
+
+        return () => clearInterval(id);
+    }, [timer, step]);
 
     const handleTextChange = (text: string) => {
         setEmail(text.trim());
     };
 
-    const handleGetOtp = () => {
+    const handleGetOtp = async () => {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (emailRegex.test(email)) {
-            // Navigate to official OTP verification
-            // Could pass a params to indication password reset mode if needed
-            router.push('/official-verify-otp');
+        if (!emailRegex.test(email)) {
+            Alert.alert('Invalid email', 'Please enter a valid registered email.');
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const result = await authService.sendPasswordResetOtpToEmail(email);
+            if (result.success) {
+                setStep('otp');
+                setOtpCode('');
+                setTimer(45);
+                setCanResend(false);
+                Alert.alert(
+                    'Reset email sent',
+                    'Check your inbox/spam for Firebase password reset mail. You can paste either the reset code or the full reset link below.'
+                );
+            } else {
+                Alert.alert('Unable to send OTP', result.error || 'Please try again.');
+            }
+        } catch (error: any) {
+            Alert.alert('Error', error.message || 'Unexpected error occurred.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleResendOtp = async () => {
+        if (!canResend || isLoading) {
+            return;
+        }
+        await handleGetOtp();
+    };
+
+    const handleResetPassword = async () => {
+        if (!otpCode.trim()) {
+            Alert.alert('Missing code', 'Please enter the reset code or paste the full reset link from your email.');
+            return;
+        }
+        if (newPassword.length < 6) {
+            Alert.alert('Weak password', 'New password must be at least 6 characters.');
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            Alert.alert('Mismatch', 'New password and confirm password do not match.');
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const result = await authService.resetPasswordWithOtpCode(otpCode, newPassword);
+            if (result.success) {
+                Alert.alert('Password updated', 'Your password has been changed. Please login with your new password.', [
+                    {
+                        text: 'Go to Login',
+                        onPress: () => router.replace('/login'),
+                    },
+                ]);
+            } else {
+                Alert.alert('Reset failed', result.error || 'Invalid or expired OTP.');
+            }
+        } catch (error: any) {
+            Alert.alert('Error', error.message || 'Unexpected error occurred.');
+        } finally {
+            setIsLoading(false);
         }
     };
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const isInputValid = emailRegex.test(email);
+    const isResetValid = otpCode.trim().length > 0 && newPassword.length >= 6 && confirmPassword.length >= 6;
 
     return (
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -82,39 +178,130 @@ export default function ForgotPasswordScreen() {
 
                         <Text style={styles.title}>Forgot Password?</Text>
                         <Text style={styles.subtitle}>
-                            Enter your registered email address to receive an OTP for password reset.
+                            {step === 'email'
+                                ? 'Enter your registered email to receive a Firebase password reset mail.'
+                                : 'Paste the reset code or full reset link from your email and set your new password.'}
                         </Text>
 
-                        {/* Input */}
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.label}>Email Address</Text>
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Enter email address"
-                                placeholderTextColor="#7A8A99"
-                                value={email}
-                                onChangeText={handleTextChange}
-                                keyboardType="email-address"
-                                autoCapitalize="none"
-                            />
-                        </View>
+                        {step === 'email' ? (
+                            <>
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.label}>Email Address</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Enter email address"
+                                        placeholderTextColor="#7A8A99"
+                                        value={email}
+                                        onChangeText={handleTextChange}
+                                        keyboardType="email-address"
+                                        autoCapitalize="none"
+                                    />
+                                </View>
 
-                        {/* Button */}
-                        <TouchableOpacity
-                            onPress={handleGetOtp}
-                            activeOpacity={0.8}
-                            disabled={!isInputValid}
-                            style={{ width: '100%' }}
-                        >
-                            <LinearGradient
-                                colors={isInputValid ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
-                                style={[styles.button, !isInputValid && styles.buttonDisabled]}
-                            >
-                                <Text style={[styles.buttonText, !isInputValid && styles.buttonTextDisabled]}>
-                                    Get OTP
-                                </Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={handleGetOtp}
+                                    activeOpacity={0.8}
+                                    disabled={!isInputValid || isLoading}
+                                    style={{ width: '100%' }}
+                                >
+                                    <LinearGradient
+                                        colors={isInputValid && !isLoading ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
+                                        style={[styles.button, (!isInputValid || isLoading) && styles.buttonDisabled]}
+                                    >
+                                        {isLoading ? (
+                                            <ActivityIndicator color="#FFFFFF" size="small" />
+                                        ) : (
+                                            <Text style={[styles.buttonText, !isInputValid && styles.buttonTextDisabled]}>
+                                                Send OTP
+                                            </Text>
+                                        )}
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </>
+                        ) : (
+                            <>
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.label}>Reset Code / Link</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Paste reset code or full link"
+                                        placeholderTextColor="#7A8A99"
+                                        value={otpCode}
+                                        onChangeText={setOtpCode}
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                    />
+                                </View>
+
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.label}>New Password</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Enter new password"
+                                        placeholderTextColor="#7A8A99"
+                                        value={newPassword}
+                                        onChangeText={setNewPassword}
+                                        secureTextEntry
+                                        autoCapitalize="none"
+                                    />
+                                </View>
+
+                                <View style={styles.inputGroup}>
+                                    <Text style={styles.label}>Confirm New Password</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Re-enter new password"
+                                        placeholderTextColor="#7A8A99"
+                                        value={confirmPassword}
+                                        onChangeText={setConfirmPassword}
+                                        secureTextEntry
+                                        autoCapitalize="none"
+                                    />
+                                </View>
+
+                                <View style={styles.resendContainer}>
+                                    {canResend ? (
+                                        <TouchableOpacity onPress={handleResendOtp} disabled={isLoading}>
+                                            <Text style={styles.resendLink}>Resend OTP</Text>
+                                        </TouchableOpacity>
+                                    ) : (
+                                        <Text style={styles.timerText}>Resend OTP in {timer}s</Text>
+                                    )}
+                                </View>
+
+                                <TouchableOpacity
+                                    onPress={handleResetPassword}
+                                    activeOpacity={0.8}
+                                    disabled={!isResetValid || isLoading}
+                                    style={{ width: '100%' }}
+                                >
+                                    <LinearGradient
+                                        colors={isResetValid && !isLoading ? ['#00c853', '#1b8a2a'] : ['#16362a', '#0e2419']}
+                                        style={[styles.button, (!isResetValid || isLoading) && styles.buttonDisabled]}
+                                    >
+                                        {isLoading ? (
+                                            <ActivityIndicator color="#FFFFFF" size="small" />
+                                        ) : (
+                                            <Text style={[styles.buttonText, !isResetValid && styles.buttonTextDisabled]}>
+                                                Verify & Reset Password
+                                            </Text>
+                                        )}
+                                    </LinearGradient>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    onPress={() => {
+                                        setStep('email');
+                                        setOtpCode('');
+                                        setNewPassword('');
+                                        setConfirmPassword('');
+                                    }}
+                                    style={styles.secondaryAction}
+                                >
+                                    <Text style={styles.secondaryActionText}>Change Email</Text>
+                                </TouchableOpacity>
+                            </>
+                        )}
                     </View>
                 </View>
             </SafeAreaView>
@@ -245,5 +432,28 @@ const styles = StyleSheet.create({
     },
     buttonTextDisabled: {
         color: '#c8d4cc',
+    },
+    resendContainer: {
+        width: '100%',
+        alignItems: 'flex-end',
+        marginBottom: 18,
+    },
+    resendLink: {
+        color: '#00c853',
+        fontSize: 14,
+        fontWeight: '700',
+        textDecorationLine: 'underline',
+    },
+    timerText: {
+        color: '#7b8a9e',
+        fontSize: 14,
+    },
+    secondaryAction: {
+        marginTop: 16,
+    },
+    secondaryActionText: {
+        color: '#7b8a9e',
+        fontSize: 14,
+        textDecorationLine: 'underline',
     },
 });

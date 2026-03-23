@@ -3,11 +3,11 @@ import { auth as firebaseAuth } from '@/firebase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { updatePassword } from 'firebase/auth';
 import { addDoc, collection, doc, getDoc, getDocs, getFirestore, limit, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     ActivityIndicator,
     Alert,
@@ -27,6 +27,7 @@ import {
     TouchableWithoutFeedback,
     View
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 
@@ -48,6 +49,12 @@ interface Order {
     weight?: string;
     points?: string;
     assignedOfficialId?: string | null;
+    pickupLocation?: {
+        address: string;
+        latitude: number;
+        longitude: number;
+        source: 'manual' | 'gps';
+    };
 }
 
 interface ResidentProfile {
@@ -135,12 +142,75 @@ export default function HomeScreen() {
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
     const [startTime, setStartTime] = useState<Date | null>(null);
     const [endTime, setEndTime] = useState<Date | null>(null);
+    const [pickupAddressInput, setPickupAddressInput] = useState('');
+    const [pickupCoords, setPickupCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+    const [pickupLocationSource, setPickupLocationSource] = useState<'manual' | 'gps' | null>(null);
+    const [isResolvingLocation, setIsResolvingLocation] = useState(false);
+
+    const resolveManualAddress = async (addressInput: string) => {
+        const normalizedAddress = addressInput.trim();
+        if (!normalizedAddress) {
+            throw new Error('Please enter a pickup location address.');
+        }
+
+        const geocoded = await Location.geocodeAsync(normalizedAddress);
+        if (!geocoded.length) {
+            throw new Error('Address not found on map. Please enter a more specific Google Maps address.');
+        }
+
+        return {
+            address: normalizedAddress,
+            latitude: geocoded[0].latitude,
+            longitude: geocoded[0].longitude,
+            source: 'manual' as const,
+        };
+    };
+
+    const handleUseCurrentLocation = async () => {
+        setIsResolvingLocation(true);
+        try {
+            const permission = await Location.requestForegroundPermissionsAsync();
+            if (permission.status !== 'granted') {
+                Alert.alert('Permission needed', 'Please allow location access to use your current pickup location.');
+                return;
+            }
+
+            const currentPosition = await Location.getCurrentPositionAsync({});
+            const latitude = currentPosition.coords.latitude;
+            const longitude = currentPosition.coords.longitude;
+            const reverse = await Location.reverseGeocodeAsync({ latitude, longitude });
+
+            let resolvedAddress = 'Current Location';
+            if (reverse.length) {
+                const geo = reverse[0];
+                const parts = [geo.name, geo.street, geo.city, geo.region, geo.postalCode]
+                    .filter(Boolean)
+                    .map((part) => String(part).trim());
+                if (parts.length) {
+                    resolvedAddress = parts.join(', ');
+                }
+            }
+
+            setPickupAddressInput(resolvedAddress);
+            setPickupCoords({ latitude, longitude });
+            setPickupLocationSource('gps');
+            Alert.alert('Location added', 'Current location has been attached to this pickup schedule.');
+        } catch {
+            Alert.alert('Error', 'Unable to fetch current location. Please enter address manually.');
+        } finally {
+            setIsResolvingLocation(false);
+        }
+    };
 
     const handleStartBooking = () => {
+        const profileAddress = profile?.address || '';
         setIsBooking(true);
         setSelectedDate(null);
         setStartTime(null);
         setEndTime(null);
+        setPickupAddressInput(profileAddress.trim() && profileAddress !== '-' ? profileAddress : '');
+        setPickupCoords(null);
+        setPickupLocationSource(null);
     };
 
     const handleConfirmBooking = async () => {
@@ -160,6 +230,24 @@ export default function HomeScreen() {
         const timeString = `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
         try {
+            let resolvedPickupLocation: {
+                address: string;
+                latitude: number;
+                longitude: number;
+                source: 'manual' | 'gps';
+            };
+
+            if (pickupCoords && pickupAddressInput.trim()) {
+                resolvedPickupLocation = {
+                    address: pickupAddressInput.trim(),
+                    latitude: pickupCoords.latitude,
+                    longitude: pickupCoords.longitude,
+                    source: pickupLocationSource || 'gps',
+                };
+            } else {
+                resolvedPickupLocation = await resolveManualAddress(pickupAddressInput);
+            }
+
             const firestore = getFirestore();
             const bookingDateKey = selectedDate.toISOString().split('T')[0];
             const monthKey = bookingDateKey.slice(0, 7);
@@ -209,7 +297,8 @@ export default function HomeScreen() {
             await addDoc(collection(firestore, 'orders'), {
                 userId,
                 residentName: profile?.name || currentUser?.displayName || 'Resident',
-                address: profile?.address || '',
+                address: resolvedPickupLocation.address,
+                pickupLocation: resolvedPickupLocation,
                 type: 'Scrap/Recyclable Waste',
                 date: selectedDate.toLocaleDateString(),
                 dateKey: bookingDateKey,
@@ -232,8 +321,8 @@ export default function HomeScreen() {
                     ? `Pickup scheduled and assigned to ${assignedOfficialName}.`
                     : 'Pickup scheduled successfully. No available official is assigned yet.'
             );
-        } catch {
-            Alert.alert('Error', 'Failed to schedule pickup. Please try again.');
+        } catch (error: any) {
+            Alert.alert('Error', error?.message || 'Failed to schedule pickup. Please try again.');
         }
     };
 
@@ -562,6 +651,8 @@ export default function HomeScreen() {
                         onBookAppointment={handleStartBooking} 
                         latestOfficialId={latestOfficialId} 
                         onViewCommonPoint={handleViewCommonPoint}
+                        totalCollectedKg={totalCollectedKg}
+                        completedCount={completedOrders.length}
                     />
                 )}
 
@@ -573,6 +664,17 @@ export default function HomeScreen() {
                         onDateChange={setSelectedDate}
                         onStartTimeChange={setStartTime}
                         onEndTimeChange={setEndTime}
+                        pickupAddressInput={pickupAddressInput}
+                        onPickupAddressChange={(value) => {
+                            setPickupAddressInput(value);
+                            if (pickupLocationSource === 'gps') {
+                                setPickupLocationSource('manual');
+                            }
+                            setPickupCoords(null);
+                        }}
+                        onUseCurrentLocation={handleUseCurrentLocation}
+                        isResolvingLocation={isResolvingLocation}
+                        pickupLocationSource={pickupLocationSource}
                         onConfirm={handleConfirmBooking}
                         onCancel={handleCancelBooking}
                     />
@@ -698,7 +800,23 @@ export default function HomeScreen() {
 
 // --- Sub Components ---
 
-const HomeContent = ({ onBookAppointment, latestOfficialId, onViewCommonPoint }: { onBookAppointment: () => void, latestOfficialId: string | null, onViewCommonPoint: () => void }) => {
+const HomeContent = ({
+    onBookAppointment,
+    latestOfficialId,
+    onViewCommonPoint,
+    totalCollectedKg,
+    completedCount,
+}: {
+    onBookAppointment: () => void,
+    latestOfficialId: string | null,
+    onViewCommonPoint: () => void,
+    totalCollectedKg: number,
+    completedCount: number,
+}) => {
+    const contributionGoalKg = 100;
+    const contributionProgress = Math.max(0, Math.min(totalCollectedKg / contributionGoalKg, 1));
+    const contributionAngle = -45 + contributionProgress * 360;
+
     return (
         <ScrollView
             contentContainerStyle={styles.scrollContent}
@@ -785,21 +903,21 @@ const HomeContent = ({ onBookAppointment, latestOfficialId, onViewCommonPoint }:
                 {/* Your Contribution Section */}
                 <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 20 }]}>Your Contribution</Text>
                 <View style={styles.contributionContainer}>
-                    {/* Circular Progress Mock */}
                     <View style={styles.circularProgress}>
                         <View style={styles.innerCircle}>
-                            <Text style={styles.contributionValue}>0.00</Text>
+                            <Text style={styles.contributionValue}>{totalCollectedKg.toFixed(2)}</Text>
                             <Text style={styles.contributionUnit}>kg</Text>
                         </View>
-                        {/* Ring borders */}
                         <View style={styles.ringBackground} />
-                        <View style={styles.ringProgress} />
+                        <View style={[styles.ringProgress, { transform: [{ rotate: `${contributionAngle}deg` }] }]} />
                     </View>
 
                     <View style={styles.wasteTypeTag}>
                         <MaterialCommunityIcons name="leaf" size={14} color="#00c853" />
-                        <Text style={styles.wasteTypeText}>Scrap Waste</Text>
+                        <Text style={styles.wasteTypeText}>{`${completedCount} pickups completed`}</Text>
                     </View>
+
+                    <Text style={styles.contributionHint}>{`${Math.round(contributionProgress * 100)}% of ${contributionGoalKg} kg yearly goal`}</Text>
                 </View>
 
                 
@@ -816,6 +934,11 @@ const BookingContent = ({
     onDateChange,
     onStartTimeChange,
     onEndTimeChange,
+    pickupAddressInput,
+    onPickupAddressChange,
+    onUseCurrentLocation,
+    isResolvingLocation,
+    pickupLocationSource,
     onConfirm,
     onCancel
 }: {
@@ -825,6 +948,11 @@ const BookingContent = ({
     onDateChange: (date: Date) => void,
     onStartTimeChange: (time: Date) => void,
     onEndTimeChange: (time: Date) => void,
+    pickupAddressInput: string,
+    onPickupAddressChange: (value: string) => void,
+    onUseCurrentLocation: () => Promise<void>,
+    isResolvingLocation: boolean,
+    pickupLocationSource: 'manual' | 'gps' | null,
     onConfirm: () => void,
     onCancel: () => void
 }) => {
@@ -832,7 +960,8 @@ const BookingContent = ({
     const isTimeWindowValid = Boolean(
         startTime && endTime && getMinutesOfDay(endTime) > getMinutesOfDay(startTime)
     );
-    const isConfirmEnabled = hasAllBookingValues && isTimeWindowValid;
+    const hasLocationInput = pickupAddressInput.trim().length > 0;
+    const isConfirmEnabled = hasAllBookingValues && isTimeWindowValid && hasLocationInput;
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showStartTimePicker, setShowStartTimePicker] = useState(false);
     const [showEndTimePicker, setShowEndTimePicker] = useState(false);
@@ -991,6 +1120,41 @@ const BookingContent = ({
                         )}
                     </View>
                 </View>
+
+                <Text style={[styles.inputLabel, { marginTop: 24 }]}>Pickup Location</Text>
+                <Text style={styles.inputHint}>Enter a valid Google Maps address or use your current location.</Text>
+                <View style={styles.inputGroupInline}>
+                    <TextInput
+                        style={styles.bookingAddressInput}
+                        placeholder="House/Street/Area, City"
+                        placeholderTextColor="#7A8A99"
+                        value={pickupAddressInput}
+                        onChangeText={onPickupAddressChange}
+                        multiline
+                    />
+                </View>
+                <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={onUseCurrentLocation}
+                    style={styles.locationActionButton}
+                    disabled={isResolvingLocation}
+                >
+                    {isResolvingLocation ? (
+                        <ActivityIndicator size="small" color="#00c853" />
+                    ) : (
+                        <>
+                            <MaterialCommunityIcons name="crosshairs-gps" size={18} color="#00c853" />
+                            <Text style={styles.locationActionText}>Use Current Location</Text>
+                        </>
+                    )}
+                </TouchableOpacity>
+                <Text style={styles.locationSourceText}>
+                    {pickupLocationSource === 'gps'
+                        ? 'Location source: Current device location'
+                        : pickupLocationSource === 'manual'
+                            ? 'Location source: Manual address'
+                            : 'Location source: Not selected yet'}
+                </Text>
 
                 {/* Actions */}
                 <View style={{ marginTop: 40, gap: 16 }}>
@@ -1803,6 +1967,12 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         color: '#7aaa8e',
     },
+    contributionHint: {
+        marginTop: 8,
+        color: '#7b8a9e',
+        fontSize: 13,
+        textAlign: 'center',
+    },
     bottomNav: {
         position: 'absolute',
         bottom: 0,
@@ -1996,6 +2166,41 @@ const styles = StyleSheet.create({
         color: '#7b8a9e',
         marginTop: -4,
         marginBottom: 10,
+    },
+    inputGroupInline: {
+        marginBottom: 12,
+    },
+    bookingAddressInput: {
+        borderWidth: 1,
+        borderColor: '#263345',
+        borderRadius: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        color: '#d0d8e4',
+        fontSize: 15,
+        minHeight: 54,
+        backgroundColor: '#0f1a26',
+    },
+    locationActionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(0,200,83,0.35)',
+        borderRadius: 10,
+        paddingVertical: 12,
+        backgroundColor: 'rgba(0,200,83,0.08)',
+    },
+    locationActionText: {
+        color: '#00c853',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    locationSourceText: {
+        marginTop: 8,
+        color: '#7b8a9e',
+        fontSize: 12,
     },
     pickerContainer: {
         marginTop: 10,
