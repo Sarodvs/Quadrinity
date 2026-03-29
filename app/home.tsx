@@ -3,6 +3,7 @@ import { auth as firebaseAuth } from '@/firebase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { useRouter } from 'expo-router';
 import { updatePassword } from 'firebase/auth';
 import { addDoc, collection, doc, getDoc, getDocs, getFirestore, limit, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
@@ -135,12 +136,39 @@ export default function HomeScreen() {
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
     const [startTime, setStartTime] = useState<Date | null>(null);
     const [endTime, setEndTime] = useState<Date | null>(null);
+    const [availableDates, setAvailableDates] = useState<Set<string>>(new Set());
+    const [isFetchingAvailability, setIsFetchingAvailability] = useState(false);
+
+    const fetchAvailableDates = async () => {
+        setIsFetchingAvailability(true);
+        try {
+            const firestore = getFirestore();
+            const officialsSnapshot = await getDocs(collection(firestore, 'officials'));
+            const dates = new Set<string>();
+            officialsSnapshot.forEach((docSnap) => {
+                const data = docSnap.data() as any;
+                if (data.isActive !== false && data.availabilityByMonth) {
+                    Object.values(data.availabilityByMonth).forEach((monthDates: any) => {
+                        if (Array.isArray(monthDates)) {
+                            monthDates.forEach((d: string) => dates.add(d));
+                        }
+                    });
+                }
+            });
+            setAvailableDates(dates);
+        } catch (error) {
+            console.error('Failed to fetch available dates', error);
+        } finally {
+            setIsFetchingAvailability(false);
+        }
+    };
 
     const handleStartBooking = () => {
         setIsBooking(true);
         setSelectedDate(null);
         setStartTime(null);
         setEndTime(null);
+        fetchAvailableDates();
     };
 
     const handleConfirmBooking = async () => {
@@ -177,6 +205,11 @@ export default function HomeScreen() {
             const activeOfficials = availableOfficialsSnapshot.docs
                 .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
                 .filter((official) => official.isActive !== false);
+
+            if (activeOfficials.length === 0) {
+                Alert.alert('Not Available', 'No officials are available on this date. Please select another date.');
+                return;
+            }
 
             if (activeOfficials.length > 0) {
                 const sameDayAssignments = await getDocs(
@@ -247,6 +280,7 @@ export default function HomeScreen() {
         setSelectedDate(null);
         setStartTime(null);
         setEndTime(null);
+        fetchAvailableDates();
     };
 
     const handleCancelOrder = (orderId: string) => {
@@ -491,22 +525,59 @@ export default function HomeScreen() {
                 return;
             }
 
-            // Construct UPI URI
-            const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiName)}&tn=${encodeURIComponent(`Order ${orderId}`)}&cu=INR`;
+            // Construct UPI URI with amount
+            const amountStr = '50.00';
+            const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiName)}&tn=${encodeURIComponent(`Order ${orderId}`)}&am=${amountStr}&cu=INR`;
 
-            const supported = await Linking.canOpenURL(upiUri);
-            if (supported) {
-                await Linking.openURL(upiUri);
-                // Mark as paid in database (Simulated success)
-                await updateDoc(doc(firestore, 'orders', orderId), {
-                    paymentStatus: 'Paid',
-                    updatedAt: Date.now()
-                });
+            if (Platform.OS === 'android') {
+                try {
+                    const result = await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                        data: upiUri,
+                    });
+                    
+                    if (result.resultCode === -1) { // Activity.RESULT_OK
+                        const responseData = JSON.stringify(result.extra || {}).toLowerCase();
+                        const isSuccess = responseData.includes('success') || responseData.includes('txn_success');
+                        const isFailed = responseData.includes('fail') || responseData.includes('txn_failure');
+                        
+                        // Most apps return -1 on success and 0 on explicitly cancelled. Check extra if available to be safe.
+                        if (isSuccess || (!isFailed)) { 
+                            setOrderActionLoadingId(orderId);
+                            await updateDoc(doc(firestore, 'orders', orderId), {
+                                paymentStatus: 'Paid',
+                                updatedAt: Date.now()
+                            });
+                            Alert.alert('Payment Successful', 'Your payment has been completed.');
+                        } else {
+                            Alert.alert('Payment Failed', 'The payment failed or was declined.');
+                        }
+                    } else if (result.resultCode === 0) { // Activity.RESULT_CANCELED
+                        Alert.alert('Payment Cancelled', 'You cancelled the payment process.');
+                    } else {
+                        Alert.alert('Payment Failed', 'Unknown payment status.');
+                    }
+                } catch (error) {
+                    Alert.alert('Error', 'No UPI app found on this device or unable to open.');
+                }
+                setOrderActionLoadingId(null);
             } else {
-                Alert.alert("Error", "No UPI app found on this device.");
+                // Initial iOS fallback behavior
+                const supported = await Linking.canOpenURL(upiUri);
+                if (supported) {
+                    await Linking.openURL(upiUri);
+                    setOrderActionLoadingId(orderId);
+                    await updateDoc(doc(firestore, 'orders', orderId), {
+                        paymentStatus: 'Paid',
+                        updatedAt: Date.now()
+                    });
+                    setOrderActionLoadingId(null);
+                } else {
+                    Alert.alert("Error", "No UPI app found on this device.");
+                }
             }
         } catch (error) {
             console.error("Payment error:", error);
+            setOrderActionLoadingId(null);
         }
     };
 
@@ -575,6 +646,8 @@ export default function HomeScreen() {
                         onEndTimeChange={setEndTime}
                         onConfirm={handleConfirmBooking}
                         onCancel={handleCancelBooking}
+                        availableDates={availableDates}
+                        isFetchingAvailability={isFetchingAvailability}
                     />
                 )}
 
@@ -817,7 +890,9 @@ const BookingContent = ({
     onStartTimeChange,
     onEndTimeChange,
     onConfirm,
-    onCancel
+    onCancel,
+    availableDates,
+    isFetchingAvailability
 }: {
     selectedDate: Date | null,
     startTime: Date | null,
@@ -826,13 +901,16 @@ const BookingContent = ({
     onStartTimeChange: (time: Date) => void,
     onEndTimeChange: (time: Date) => void,
     onConfirm: () => void,
-    onCancel: () => void
+    onCancel: () => void,
+    availableDates: Set<string>,
+    isFetchingAvailability: boolean
 }) => {
     const hasAllBookingValues = Boolean(selectedDate && startTime && endTime);
     const isTimeWindowValid = Boolean(
         startTime && endTime && getMinutesOfDay(endTime) > getMinutesOfDay(startTime)
     );
-    const isConfirmEnabled = hasAllBookingValues && isTimeWindowValid;
+    const isDateAvailable = Boolean(selectedDate && availableDates.has(selectedDate.toISOString().split('T')[0]));
+    const isConfirmEnabled = hasAllBookingValues && isTimeWindowValid && isDateAvailable;
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showStartTimePicker, setShowStartTimePicker] = useState(false);
     const [showEndTimePicker, setShowEndTimePicker] = useState(false);
@@ -909,6 +987,12 @@ const BookingContent = ({
                         <Text style={{ color: '#00c853', fontWeight: '600' }}>Select</Text>
                     </TouchableOpacity>
                 </View>
+                {isFetchingAvailability && (
+                    <Text style={{ color: '#7b8a9e', fontSize: 13, marginTop: 4 }}>Loading official availability...</Text>
+                )}
+                {selectedDate && !isDateAvailable && !isFetchingAvailability && (
+                    <Text style={[styles.errorLabel, { marginTop: 4, marginLeft: 0 }]}>No officials are available on this date. Please select another date.</Text>
+                )}
                 {showDatePicker && (
                     <View style={styles.pickerContainer}>
                         <DateTimePicker

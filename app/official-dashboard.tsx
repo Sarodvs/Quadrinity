@@ -62,6 +62,24 @@ const getWeekKey = (date = new Date()) => {
     return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 };
 
+const parseTimeStringToMinutes = (timeStr: string) => {
+    if (!timeStr || timeStr === 'Time not provided' || timeStr === '-') return 0;
+    
+    // Handle "HH:MM AM/PM" or "HH:MM AM/PM - HH:MM AM/PM"
+    const startTimePart = timeStr.split('-')[0].trim();
+    const match = startTimePart.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!match) return 0;
+
+    let [_, hours, minutes, period] = match;
+    let h = parseInt(hours, 10);
+    const m = parseInt(minutes, 10);
+
+    if (period.toUpperCase() === 'PM' && h < 12) h += 12;
+    if (period.toUpperCase() === 'AM' && h === 12) h = 0;
+
+    return h * 60 + m;
+};
+
 interface PlannedCollection {
     id: string;
     residentName: string;
@@ -699,7 +717,14 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
                                 availableDateSet.has(order.dateKey)
                             );
                         })
-                        .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+                        .sort((a, b) => {
+                            // Primary sort: Date
+                            const dateComparison = a.dateKey.localeCompare(b.dateKey);
+                            if (dateComparison !== 0) return dateComparison;
+
+                            // Secondary sort: Time
+                            return parseTimeStringToMinutes(a.time) - parseTimeStringToMinutes(b.time);
+                        });
 
                     setPlannedCollections(mappedCollections);
                 } finally {
