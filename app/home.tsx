@@ -3,6 +3,7 @@ import { auth as firebaseAuth } from '@/firebase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as IntentLauncher from 'expo-intent-launcher';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { updatePassword } from 'firebase/auth';
@@ -43,6 +44,7 @@ interface Order {
     id: string;
     type: string;
     date: string;
+    dateKey?: string;
     time: string;
     status: string;
     paymentStatus?: string;
@@ -139,6 +141,8 @@ export default function HomeScreen() {
 
     // Booking State
     const [isBooking, setIsBooking] = useState(false);
+    const [availableDates, setAvailableDates] = useState<Set<string>>(new Set());
+    const [isFetchingDates, setIsFetchingDates] = useState(false);
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
     const [startTime, setStartTime] = useState<Date | null>(null);
     const [endTime, setEndTime] = useState<Date | null>(null);
@@ -202,7 +206,7 @@ export default function HomeScreen() {
         }
     };
 
-    const handleStartBooking = () => {
+    const handleStartBooking = async () => {
         const profileAddress = profile?.address || '';
         setIsBooking(true);
         setSelectedDate(null);
@@ -211,6 +215,32 @@ export default function HomeScreen() {
         setPickupAddressInput(profileAddress.trim() && profileAddress !== '-' ? profileAddress : '');
         setPickupCoords(null);
         setPickupLocationSource(null);
+
+        setIsFetchingDates(true);
+        try {
+            const firestore = getFirestore();
+            const officialsSnapshot = await getDocs(collection(firestore, 'officials'));
+            
+            const globallyAvailableDates = new Set<string>();
+            officialsSnapshot.docs.forEach((docSnap) => {
+                const data = docSnap.data();
+                if (data.isActive === false) return; // Skip inactive officials
+                
+                const availabilityByMonth = data.availabilityByMonth || {};
+                Object.values(availabilityByMonth).forEach((datesList: any) => {
+                    if (Array.isArray(datesList)) {
+                        datesList.forEach((dateString) => {
+                            globallyAvailableDates.add(dateString);
+                        });
+                    }
+                });
+            });
+            setAvailableDates(globallyAvailableDates);
+        } catch (error) {
+            console.error('Failed to fetch available dates', error);
+        } finally {
+            setIsFetchingDates(false);
+        }
     };
 
     const handleConfirmBooking = async () => {
@@ -227,103 +257,139 @@ export default function HomeScreen() {
             return;
         }
 
+        const dateString = selectedDate.toLocaleDateString();
         const timeString = `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
-        try {
-            let resolvedPickupLocation: {
-                address: string;
-                latitude: number;
-                longitude: number;
-                source: 'manual' | 'gps';
-            };
+        // Check for duplicate bookings
+        const activeOrders = orders.filter((o) => o.status !== 'Cancelled' && o.status !== 'Completed');
+        const selectedDateWeek = getWeekKey(selectedDate);
 
-            if (pickupCoords && pickupAddressInput.trim()) {
-                resolvedPickupLocation = {
-                    address: pickupAddressInput.trim(),
-                    latitude: pickupCoords.latitude,
-                    longitude: pickupCoords.longitude,
-                    source: pickupLocationSource || 'gps',
-                };
-            } else {
-                resolvedPickupLocation = await resolveManualAddress(pickupAddressInput);
-            }
-
-            const firestore = getFirestore();
-            const bookingDateKey = selectedDate.toISOString().split('T')[0];
-            const monthKey = bookingDateKey.slice(0, 7);
-
-            let assignedOfficialId = '';
-            let assignedOfficialName = '';
-
-            const availableOfficialsSnapshot = await getDocs(
-                query(
-                    collection(firestore, 'officials'),
-                    where(`availabilityByMonth.${monthKey}`, 'array-contains', bookingDateKey)
-                )
-            );
-
-            const activeOfficials = availableOfficialsSnapshot.docs
-                .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
-                .filter((official) => official.isActive !== false);
-
-            if (activeOfficials.length > 0) {
-                const sameDayAssignments = await getDocs(
-                    query(collection(firestore, 'orders'), where('dateKey', '==', bookingDateKey))
-                );
-
-                const loadByOfficial: Record<string, number> = {};
-                sameDayAssignments.docs.forEach((orderDoc) => {
-                    const order = orderDoc.data() as any;
-                    const status = String(order.status || '').toLowerCase();
-                    if (status === 'scheduled' || status === 'pending') {
-                        const officialId = order.assignedOfficialId;
-                        if (officialId) {
-                            loadByOfficial[officialId] = (loadByOfficial[officialId] || 0) + 1;
-                        }
-                    }
-                });
-
-                activeOfficials.sort((a, b) => {
-                    const aLoad = loadByOfficial[a.userId || a.id] || 0;
-                    const bLoad = loadByOfficial[b.userId || b.id] || 0;
-                    return aLoad - bLoad;
-                });
-
-                const selectedOfficial = activeOfficials[0];
-                assignedOfficialId = selectedOfficial.userId || selectedOfficial.id;
-                assignedOfficialName = selectedOfficial.displayName || assignedOfficialId;
-            }
-
-            await addDoc(collection(firestore, 'orders'), {
-                userId,
-                residentName: profile?.name || currentUser?.displayName || 'Resident',
-                address: resolvedPickupLocation.address,
-                pickupLocation: resolvedPickupLocation,
-                type: 'Scrap/Recyclable Waste',
-                date: selectedDate.toLocaleDateString(),
-                dateKey: bookingDateKey,
-                time: timeString,
-                status: 'Scheduled',
-                assignedOfficialId,
-                assignedOfficialName,
-                assignmentStatus: assignedOfficialId ? 'assigned' : 'unassigned',
-                weight: '-',
-                points: '0 Points',
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-            });
-
-            setIsBooking(false);
-            setActiveTab('orders');
+        const hasSameDateDuplicate = activeOrders.some((o) => o.date === dateString);
+        if (hasSameDateDuplicate) {
             Alert.alert(
-                'Success',
-                assignedOfficialName
-                    ? `Pickup scheduled and assigned to ${assignedOfficialName}.`
-                    : 'Pickup scheduled successfully. No available official is assigned yet.'
+                'Duplicate Booking',
+                'You already have a pickup scheduled for this exact date. Please select a different day.'
             );
-        } catch (error: any) {
-            Alert.alert('Error', error?.message || 'Failed to schedule pickup. Please try again.');
+            return;
         }
+
+        const proceedWithBooking = async () => {
+            try {
+                let resolvedPickupLocation: {
+                    address: string;
+                    latitude: number;
+                    longitude: number;
+                    source: 'manual' | 'gps';
+                };
+
+                if (pickupCoords && pickupAddressInput.trim()) {
+                    resolvedPickupLocation = {
+                        address: pickupAddressInput.trim(),
+                        latitude: pickupCoords.latitude,
+                        longitude: pickupCoords.longitude,
+                        source: pickupLocationSource || 'gps',
+                    };
+                } else {
+                    resolvedPickupLocation = await resolveManualAddress(pickupAddressInput);
+                }
+
+                const firestore = getFirestore();
+                const bookingDateKey = selectedDate.toISOString().split('T')[0];
+                const monthKey = bookingDateKey.slice(0, 7);
+
+                let assignedOfficialId = '';
+                let assignedOfficialName = '';
+
+                const officialsSnapshot = await getDocs(collection(firestore, 'officials'));
+
+                const activeOfficials = officialsSnapshot.docs
+                    .map((entry) => ({ id: entry.id, ...(entry.data() as any) }))
+                    .filter((official) => {
+                        if (official.isActive === false) return false;
+                        const availabilityByMonth = official.availabilityByMonth || {};
+                        let isAvailable = false;
+                        Object.values(availabilityByMonth).forEach((datesList: any) => {
+                            if (Array.isArray(datesList) && datesList.includes(bookingDateKey)) {
+                                isAvailable = true;
+                            }
+                        });
+                        return isAvailable;
+                    });
+
+                if (activeOfficials.length > 0) {
+                    const sameDayAssignments = await getDocs(
+                        query(collection(firestore, 'orders'), where('dateKey', '==', bookingDateKey))
+                    );
+
+                    const loadByOfficial: Record<string, number> = {};
+                    sameDayAssignments.docs.forEach((orderDoc) => {
+                        const order = orderDoc.data() as any;
+                        const status = String(order.status || '').toLowerCase();
+                        if (status === 'scheduled' || status === 'pending') {
+                            const officialId = order.assignedOfficialId;
+                            if (officialId) {
+                                loadByOfficial[officialId] = (loadByOfficial[officialId] || 0) + 1;
+                            }
+                        }
+                    });
+
+                    activeOfficials.sort((a, b) => {
+                        const aLoad = loadByOfficial[a.userId || a.id] || 0;
+                        const bLoad = loadByOfficial[b.userId || b.id] || 0;
+                        return aLoad - bLoad;
+                    });
+
+                    const selectedOfficial = activeOfficials[0];
+                    assignedOfficialId = selectedOfficial.userId || selectedOfficial.id;
+                    assignedOfficialName = selectedOfficial.displayName || assignedOfficialId;
+                }
+
+                await addDoc(collection(firestore, 'orders'), {
+                    userId,
+                    residentName: profile?.name || currentUser?.displayName || 'Resident',
+                    address: resolvedPickupLocation.address,
+                    pickupLocation: resolvedPickupLocation,
+                    type: 'Scrap/Recyclable Waste',
+                    date: selectedDate.toLocaleDateString(),
+                    dateKey: bookingDateKey,
+                    time: timeString,
+                    status: 'Scheduled',
+                    assignedOfficialId,
+                    assignedOfficialName,
+                    assignmentStatus: assignedOfficialId ? 'assigned' : 'unassigned',
+                    weight: '-',
+                    points: '0 Points',
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                });
+
+                setIsBooking(false);
+                setActiveTab('orders');
+                Alert.alert(
+                    'Success',
+                    assignedOfficialName
+                        ? `Pickup scheduled and assigned to ${assignedOfficialName}.`
+                        : 'Pickup scheduled successfully. No available official is assigned yet.'
+                );
+            } catch (error: any) {
+                Alert.alert('Error', error?.message || 'Failed to schedule pickup. Please try again.');
+            }
+        };
+
+        const hasSameWeekDuplicate = activeOrders.some((o) => {
+            if (!o.dateKey) return false;
+            const orderDate = new Date(o.dateKey);
+            return !Number.isNaN(orderDate.getTime()) && getWeekKey(orderDate) === selectedDateWeek;
+        });
+        if (hasSameWeekDuplicate) {
+            Alert.alert(
+                'Weekly Limit Reached',
+                'Only one pickup can be scheduled per week. You already have a pickup scheduled for this week.'
+            );
+            return;
+        }
+
+        proceedWithBooking();
     };
 
     const handleCancelBooking = () => {
@@ -428,11 +494,13 @@ export default function HomeScreen() {
                             id: item.id,
                             type: data.type || 'Scrap/Recyclable Waste',
                             date: data.date || '-',
+                            dateKey: data.dateKey,
                             time: data.time || '-',
                             status: normalizeOrderStatus(data.status),
                             paymentStatus: data.paymentStatus || 'Pending',
                             weight: data.weight || '-',
                             points: data.points || '0 Points',
+                            assignedOfficialId: data.assignedOfficialId || null,
                             createdAt: data.createdAt || 0,
                             updatedAt: data.updatedAt || 0,
                         };
@@ -560,7 +628,7 @@ export default function HomeScreen() {
         await handleLogout();
     };
 
-    const handleOrderPayment = async (orderId: string) => {
+    const handleOrderPayment = async (orderId: string, officialId?: string | null) => {
         try {
             const firestore = getFirestore();
             const adminRef = doc(firestore, 'admin', 'settings');
@@ -580,22 +648,59 @@ export default function HomeScreen() {
                 return;
             }
 
-            // Construct UPI URI
+            // Construct UPI URI (without am parameter so resident enters amount manually)
             const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(upiName)}&tn=${encodeURIComponent(`Order ${orderId}`)}&cu=INR`;
 
-            const supported = await Linking.canOpenURL(upiUri);
-            if (supported) {
-                await Linking.openURL(upiUri);
-                // Mark as paid in database (Simulated success)
-                await updateDoc(doc(firestore, 'orders', orderId), {
-                    paymentStatus: 'Paid',
-                    updatedAt: Date.now()
-                });
+            if (Platform.OS === 'android') {
+                try {
+                    const result = await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                        data: upiUri,
+                    });
+                    
+                    if (result.resultCode === -1) { // Activity.RESULT_OK
+                        const resultStr = JSON.stringify(result).toLowerCase();
+                        if (resultStr.includes('failure') || resultStr.includes('failed')) {
+                            Alert.alert('Payment Failed', 'The transaction failed.');
+                        } else {
+                            await updateDoc(doc(firestore, 'orders', orderId), {
+                                paymentStatus: 'Paid',
+                                updatedAt: Date.now()
+                            });
+                            Alert.alert('Success', 'Payment marked as successful.');
+                        }
+                    } else {
+                        Alert.alert('Payment Cancelled', 'The payment process was cancelled.');
+                    }
+                } catch (e) {
+                    Alert.alert("Error", "No UPI app found on this device or action not supported.");
+                }
             } else {
-                Alert.alert("Error", "No UPI app found on this device.");
+                const supported = await Linking.canOpenURL(upiUri);
+                if (supported) {
+                    await Linking.openURL(upiUri);
+                    Alert.alert(
+                        'Confirm Payment',
+                        'Did the payment complete successfully?',
+                        [
+                            { text: 'No, Cancel', style: 'cancel' },
+                            {
+                                text: 'Yes, Paid',
+                                onPress: async () => {
+                                    await updateDoc(doc(firestore, 'orders', orderId), {
+                                        paymentStatus: 'Paid',
+                                        updatedAt: Date.now()
+                                    });
+                                }
+                            }
+                        ]
+                    );
+                } else {
+                    Alert.alert("Error", "No UPI app found on this device.");
+                }
             }
         } catch (error) {
             console.error("Payment error:", error);
+            Alert.alert("Error", "Could not process payment.");
         }
     };
 
@@ -658,6 +763,7 @@ export default function HomeScreen() {
 
                 {activeTab === 'home' && isBooking && (
                     <BookingContent
+                        availableDates={availableDates}
                         selectedDate={selectedDate}
                         startTime={startTime}
                         endTime={endTime}
@@ -928,6 +1034,7 @@ const HomeContent = ({
 };
 
 const BookingContent = ({
+    availableDates,
     selectedDate,
     startTime,
     endTime,
@@ -942,6 +1049,7 @@ const BookingContent = ({
     onConfirm,
     onCancel
 }: {
+    availableDates: Set<string>,
     selectedDate: Date | null,
     startTime: Date | null,
     endTime: Date | null,
@@ -980,6 +1088,13 @@ const BookingContent = ({
             setShowDatePicker(false);
         }
         if (event.type !== 'set' || !date) return;
+
+        const dateString = date.toISOString().split('T')[0];
+        if (!availableDates.has(dateString)) {
+            Alert.alert('Unavailable', 'No officials are available on this date. Please select a different day.');
+            return;
+        }
+
         onDateChange(date);
     };
 
@@ -1202,7 +1317,7 @@ const OrdersContent = ({
     orders: Order[];
     onSchedulePickup: () => void;
     onCancelOrder: (orderId: string) => void;
-    handleOrderPayment: (orderId: string) => void;
+    handleOrderPayment: (orderId: string, officialId?: string | null) => void;
     isOrdersLoading: boolean;
     orderActionLoadingId: string | null;
 }) => {
@@ -1325,7 +1440,7 @@ const OrdersContent = ({
                                     <TouchableOpacity
                                         style={[styles.payNowButton, { flex: 1 }]}
                                         activeOpacity={0.8}
-                                        onPress={() => handleOrderPayment(order.id)}
+                                        onPress={() => handleOrderPayment(order.id, order.assignedOfficialId)}
                                     >
                                         <LinearGradient
                                             colors={['#00c853', '#009624']}

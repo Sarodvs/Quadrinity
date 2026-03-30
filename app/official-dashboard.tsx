@@ -723,7 +723,25 @@ const ScheduleContent = ({ currentUser, onScanQR }: any) => {
                                 availableDateSet.has(order.dateKey)
                             );
                         })
-                        .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+                        .sort((a, b) => {
+                            const dateCmp = a.dateKey.localeCompare(b.dateKey);
+                            if (dateCmp !== 0) return dateCmp;
+
+                            const parseSortableTime = (timeStr: string) => {
+                                if (!timeStr) return 0;
+                                const startPart = timeStr.split('-')[0].trim();
+                                const match = startPart.match(/(\d+):(\d+)\s*(AM|PM)/i);
+                                if (!match) return 0;
+                                let hours = parseInt(match[1], 10);
+                                const mins = parseInt(match[2], 10);
+                                const ampm = match[3].toUpperCase();
+                                if (ampm === 'PM' && hours < 12) hours += 12;
+                                if (ampm === 'AM' && hours === 12) hours = 0;
+                                return hours * 60 + mins;
+                            };
+
+                            return parseSortableTime(a.time) - parseSortableTime(b.time);
+                        });
 
                     setPlannedCollections(mappedCollections);
                 } finally {
